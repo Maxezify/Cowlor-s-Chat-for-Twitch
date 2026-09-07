@@ -130,22 +130,77 @@ M.strip_mention = strip_mention
 -- Résolus une seule fois, au démarrage, quand `c2` est disponible.
 local FLAGS = nil
 
+--- Assemble un masque à partir de NOMS de drapeaux, en ignorant ceux que la
+--- version installée n'expose pas.
+---
+--- Le fichier de types `globals.lua` liste des drapeaux que l'exécution n'a pas.
+--- `Badges`, `Emote`, `EmojiAll` et `Default` y figurent, mais ce sont des
+--- drapeaux COMBINÉS — des OU d'autres drapeaux — et les liaisons n'exportent
+--- que les bits simples. Les nommer faisait échouer le chargement du plugin.
+--- On ne se fie donc plus au fichier de types : on demande, et on constate.
+---@param names string[]
+---@return integer mask
+---@return string[] missing
+local function build_mask(names)
+    local EF = c2.MessageElementFlag or {}
+    local value = 0
+    local missing = {}
+
+    for _, name in ipairs(names) do
+        local flag = EF[name]
+        if type(flag) == "number" then
+            value = value | flag
+        else
+            missing[#missing + 1] = name
+        end
+    end
+
+    return value, missing
+end
+M.build_mask = build_mask
+
+--- Prépare les masques. Renvoie false si l'indispensable manque, auquel cas le
+--- plugin se met en veille au lieu de faire échouer son chargement.
+---@return boolean ok
 local function resolve_flags()
-    local EF = c2.MessageElementFlag
-    FLAGS = {
-        -- Ce qui constitue le corps d'un message : son texte et ses emotes.
-        -- Chatterino émet DEUX éléments par emote (image et texte) et n'en met
-        -- qu'un en page selon les réglages ; on recopie les deux pour que le
-        -- réglage de l'utilisateur continue de décider.
-        body = EF.Text | EF.EmoteImage | EF.EmoteText | EF.EmojiImage | EF.EmojiText,
+    local missing = {}
+    local function collect(names)
+        local value, absent = build_mask(names)
+        for _, name in ipairs(absent) do
+            missing[#missing + 1] = name
+        end
+        return value
+    end
 
-        -- Ce qui n'en fait pas partie et ne doit pas être recopié dans la citation.
-        notBody = EF.Username | EF.Timestamp | EF.Badges | EF.ModeratorTools
-            | EF.RepliedMessage | EF.ChannelName | EF.ReplyButton,
+    -- Ce qui constitue le corps d'un message : son texte et ses emotes.
+    -- Chatterino émet DEUX éléments par emote (image et texte) et n'en met qu'un
+    -- en page selon les réglages ; on recopie les deux pour que le réglage de
+    -- l'utilisateur continue de décider.
+    local body = collect({ "Text", "EmoteImage", "EmoteText", "EmojiImage", "EmojiText" })
 
-        replied = EF.RepliedMessage,
-        text = EF.Text,
-    }
+    -- Ce qu'il faut écarter. La liste est courte à dessein : horodatage, badges
+    -- et boutons de modération ne portent aucun drapeau de corps, donc le test
+    -- positif ci-dessus les élimine déjà. Restent les deux qui, eux, portent
+    -- bien `Text` et passeraient au travers : le pseudo de l'auteur, et la
+    -- citation que le parent porterait lui-même.
+    local notBody = collect({ "Username", "RepliedMessage", "ChannelName" })
+
+    local replied = collect({ "RepliedMessage" })
+    local text = collect({ "Text" })
+
+    if #missing > 0 then
+        log(c2.LogLevel.Warning, "drapeaux absents de cette version :",
+            table.concat(missing, ", "))
+    end
+
+    -- Sans ces deux-là, on ne sait ni reconnaître un corps de message ni ranger
+    -- quoi que ce soit dans une citation : mieux vaut ne rien faire.
+    if text == 0 or replied == 0 then
+        return false
+    end
+
+    FLAGS = { body = body, notBody = notBody, replied = replied, text = text }
+    return true
 end
 
 -- =============================================================================
@@ -323,6 +378,16 @@ end
 --- clonés à l'insertion.
 ---@param parts table
 ---@return table elements
+--- Style de police de la citation, résolu une fois. Un nom inconnu retombe sur
+--- le défaut de Chatterino plutôt que de poser `nil` sans prévenir.
+local function quote_style()
+    local style = (c2.FontStyle or {})[CONFIG.reply.fontStyle]
+    if style == nil then
+        log(c2.LogLevel.Warning, "style de police inconnu :", CONFIG.reply.fontStyle)
+    end
+    return style
+end
+
 local function parts_to_elements(parts)
     local out = {}
 
@@ -335,7 +400,7 @@ local function parts_to_elements(parts)
                     text = text,
                     flags = FLAGS.replied | FLAGS.text,
                     color = CONFIG.reply.color or "system",
-                    style = c2.FontStyle[CONFIG.reply.fontStyle],
+                    style = quote_style(),
                 }
             end
         else
@@ -446,7 +511,7 @@ local function rebuild_reply(channel, msg)
                 text = text,
                 flags = FLAGS.replied | FLAGS.text,
                 color = CONFIG.reply.color or "system",
-                style = c2.FontStyle[CONFIG.reply.fontStyle],
+                style = quote_style(),
             },
         }
         debug("parent introuvable, citation réémise en texte :", ctx.name)
@@ -579,15 +644,63 @@ end
 
 M.CONFIG = CONFIG
 
+--- Vérifie que la version installée expose ce dont le plugin a besoin.
+---
+--- `Channel:on_message_appended` et `c2.windows` n'existent PAS dans Chatterino7
+--- v7.5.5 : ils sont arrivés après. Sans eux il n'y a ni moyen d'être prévenu
+--- qu'un message arrive, ni moyen d'énumérer les canaux ouverts — et donc aucune
+--- façon de faire ce que ce plugin fait.
+---
+--- On préfère le dire clairement plutôt que de se taire ou de planter.
+---@return boolean ok
+---@return string? reason
+local function check_api()
+    if type(c2.windows) ~= "userdata" and type(c2.windows) ~= "table" then
+        return false, "c2.windows"
+    end
+
+    -- On ne peut pas tester la méthode sans un canal ; on se contente de vérifier
+    -- que la table de métadonnées de Channel la connaît, via un canal quelconque.
+    local probe = c2.Channel and c2.Channel.by_name and c2.Channel.by_name("/whispers")
+    if probe and probe.on_message_appended == nil then
+        return false, "Channel:on_message_appended"
+    end
+
+    return true
+end
+
 -- Sous le harnais de test, `c2` est une API simulée et on ne démarre pas les
 -- minuteries : les tests appellent les fonctions pures directement.
 if c2 then
-    resolve_flags()
-    M.FLAGS = FLAGS
+    -- Tout le démarrage est sous pcall : une API qui bouge doit mettre le plugin
+    -- en veille avec un message lisible, jamais l'empêcher de se charger.
+    local ok, err = pcall(function()
+        if not resolve_flags() then
+            log(c2.LogLevel.Critical,
+                "drapeaux indispensables absents — plugin inactif")
+            return
+        end
+        M.FLAGS = FLAGS
 
-    if not rawget(_G, "COWLORS_CHAT_TEST") then
-        log(c2.LogLevel.Info, "v0.1.0 — citations de réponse")
+        if rawget(_G, "COWLORS_CHAT_TEST") then
+            return
+        end
+
+        local supported, missing = check_api()
+        if not supported then
+            log(c2.LogLevel.Critical,
+                "cette version de Chatterino n'expose pas " .. tostring(missing) ..
+                " — le plugin reste inactif. Il faut une version postérieure à " ..
+                "Chatterino7 v7.5.5 (build nightly). Voir le README.")
+            return
+        end
+
+        log(c2.LogLevel.Info, "v0.1.1 — citations de réponse")
         sweep_channels()
+    end)
+
+    if not ok then
+        log(c2.LogLevel.Critical, "démarrage interrompu :", tostring(err))
     end
 end
 

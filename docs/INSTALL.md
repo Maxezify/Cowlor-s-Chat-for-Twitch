@@ -29,10 +29,18 @@ pratique, choisis-en un des deux, pas les deux.
 
 ## Étapes
 
-### 1. Chatterino7
+### 1. Chatterino7 — build nightly
 
-Installer depuis les releases de [SevenTV/chatterino7](https://github.com/SevenTV/chatterino7/releases),
-puis **le lancer au moins une fois**.
+**La v7.5.5 stable ne convient pas.** Elle n'expose ni
+`Channel:on_message_appended` ni `c2.windows` : sans eux, aucun moyen de réagir à
+l'arrivée d'un message ni de découvrir les canaux ouverts. Le plugin s'y charge
+mais reste en veille, et écrit pourquoi dans la console.
+
+Prendre donc le [build nightly](https://github.com/SevenTV/chatterino7/releases/tag/nightly-build)
+(`Chatterino7TV.Nightly.Installer.exe`), puis **le lancer au moins une fois**.
+
+SevenTV marque ce build comme expérimental. C'est la contrainte du projet en
+l'état, pas une préférence.
 
 Ce premier lancement n'est pas facultatif : c'est Chatterino qui inscrit l'hôte
 de messagerie native dans le registre

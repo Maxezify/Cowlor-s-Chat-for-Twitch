@@ -129,6 +129,48 @@ test("strip_mention retire @ et :", function()
 end)
 
 -- ---------------------------------------------------------------------------
+print("\nrésistance aux drapeaux manquants")
+-- ---------------------------------------------------------------------------
+-- Le fichier de types de Chatterino liste des drapeaux que l'exécution n'expose
+-- pas : les combinés (Emote, Badges, EmojiAll, Default) n'en sont que des OU, et
+-- les liaisons n'exportent que les bits simples. Nommer `Badges` empêchait le
+-- plugin de se charger. Ces tests verrouillent la leçon.
+
+test("build_mask assemble les drapeaux présents", function()
+    local m = plugin.build_mask({ "Text", "Username" })
+    equal(m, EF.Text | EF.Username)
+end)
+
+test("build_mask ignore un drapeau absent au lieu de lever", function()
+    local m, missing = plugin.build_mask({ "Text", "Badges", "Username" })
+    equal(m, EF.Text | EF.Username, "le masque doit tenir sans le drapeau absent")
+    equal(#missing, 1, "un manquant attendu")
+    equal(missing[1], "Badges")
+end)
+
+test("build_mask sur des noms tous absents rend un masque nul", function()
+    local m, missing = plugin.build_mask({ "Badges", "EmojiAll", "Default" })
+    equal(m, 0)
+    equal(#missing, 3)
+end)
+
+test("aucun drapeau combiné n'est exposé par l'API simulée", function()
+    -- Si quelqu'un les rajoute au mock « pour que ça marche », ce test tombe et
+    -- rappelle pourquoi ils n'y sont pas.
+    for _, name in ipairs({ "Emote", "Badges", "EmojiAll", "Default" }) do
+        check(EF[name] == nil,
+            "le drapeau combiné " .. name .. " ne doit pas exister à l'exécution")
+    end
+end)
+
+test("les masques du plugin se résolvent sans drapeau combiné", function()
+    check(plugin.FLAGS, "les drapeaux doivent être résolus")
+    check(plugin.FLAGS.text ~= 0, "Text est indispensable")
+    check(plugin.FLAGS.replied ~= 0, "RepliedMessage est indispensable")
+    check(plugin.FLAGS.body ~= 0, "le masque de corps ne peut pas être vide")
+end)
+
+-- ---------------------------------------------------------------------------
 print("\nrepérage de la citation")
 -- ---------------------------------------------------------------------------
 

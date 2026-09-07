@@ -16,6 +16,10 @@ end
 
 local c2 = {}
 
+-- Uniquement les drapeaux à BIT SIMPLE : les liaisons de Chatterino
+-- n'exportent pas les drapeaux combinés (Emote, Badges, EmojiAll, Default),
+-- même si le fichier de types les liste. Les omettre ici garantit qu'un test
+-- échoue si le plugin se remet à en dépendre.
 c2.MessageElementFlag = {
     None = 0,
     Misc = bit(0),
@@ -24,15 +28,12 @@ c2.MessageElementFlag = {
     Timestamp = bit(3),
     EmoteImage = bit(4),
     EmoteText = bit(5),
-    Emote = bit(4) | bit(5),
     BadgeGlobalAuthority = bit(6),
     BadgeSubscription = bit(7),
-    Badges = bit(6) | bit(7),
     ChannelName = bit(8),
     ModeratorTools = bit(9),
     EmojiImage = bit(10),
     EmojiText = bit(11),
-    EmojiAll = bit(10) | bit(11),
     RepliedMessage = bit(12),
     ReplyButton = bit(13),
     AlwaysShow = bit(14),

@@ -10,14 +10,30 @@ Chatterino tronque les citations de réponse exactement comme Twitch le fait.
 
 Ce dépôt les rétablit, **sans compiler quoi que ce soit**.
 
+## ⚠️ Version de Chatterino7 requise
+
+**Il faut un build *nightly*. La v7.5.5 stable ne suffit pas.**
+
+Le plugin a besoin de `Channel:on_message_appended` (être prévenu qu'un message
+arrive) et de `c2.windows` (énumérer les canaux ouverts). Ces deux API sont
+arrivées **après** la v7.5.5 : sur la stable, il n'existe aucun moyen de réagir à
+un message ni de découvrir les canaux, donc aucune façon de faire ce que ce
+plugin fait.
+
+Sur une version trop ancienne, le plugin se charge, se met en veille et écrit la
+raison dans la console — il ne plante pas.
+
+Le nightly est explicitement marqué expérimental par SevenTV. C'est un vrai coût
+à peser : voir « Limites connues ».
+
 ## État
 
-**v0.1.0 — citations de réponse.** Le reste est en chantier, voir la feuille de
+**v0.1.1 — citations de réponse.** Le reste est en chantier, voir la feuille de
 route plus bas.
 
 | | |
 |---|---|
-| Logique | testée — 29 vérifications contre une API `c2` simulée |
+| Logique | testée — 34 vérifications contre une API `c2` simulée |
 | Rendu réel | **jamais exécuté dans Chatterino** |
 
 Ce plugin n'a pas encore tourné une seule fois dans un vrai Chatterino. La
@@ -82,9 +98,14 @@ lua5.4 tests/run.lua
 
 Les tests montent une API `c2` simulée (`tests/mock_c2.lua`) qui reproduit le
 contrat observé dans les liaisons de Chatterino : éléments en lecture seule sauf
-`add_flags`, clonage à l'insertion, messages gelés une fois affichés. Ils
-couvrent le repérage de la citation, la recherche du parent, l'extraction de son
-corps et l'assemblage du remplaçant.
+`add_flags`, clonage à l'insertion, messages gelés une fois affichés. Elle
+n'expose **que les drapeaux à bit simple**, comme l'exécution réelle — les
+combinés (`Emote`, `Badges`, `EmojiAll`) figurent dans le fichier de types mais
+pas dans le binaire, et s'y fier a déjà empêché le plugin de se charger.
+
+Les tests couvrent le repérage de la citation, la recherche du parent,
+l'extraction de son corps, l'assemblage du remplaçant, et la résistance à un
+drapeau manquant.
 
 Ils ne couvrent pas — et aucun test hors de Chatterino ne le peut — le rendu, le
 coût en performance, et le comportement de `replace_message` sur un message déjà
@@ -103,8 +124,14 @@ ne coûte rien.
 - **Superposition, pas intégration.** La fenêtre Chatterino est posée par-dessus
   la page et suivie par un minuteur à 1 ms. Elle n'est pas découpée par le
   navigateur et peut dériver en DPI mis à l'échelle ou en multi-écran.
-- **API de plugins alpha.** Compilée dans les binaires Windows officiels et
-  activable par une case à cocher, mais susceptible de changer sans préavis.
+- **API de plugins alpha, et qui bouge vite.** Entre la v7.5.5 et le nightly,
+  l'API des canaux a gagné les événements dont ce plugin dépend. Elle peut donc
+  aussi en perdre. Le plugin vérifie ce qu'il trouve au démarrage plutôt que de
+  se fier au fichier de types — celui-ci liste des drapeaux que l'exécution
+  n'expose pas, ce qui a déjà cassé un chargement.
+- **Build nightly requis**, donc explicitement expérimental. Si le nightly
+  s'avère instable à l'usage, le projet n'a pas de porte de sortie côté stable :
+  il faudrait attendre la prochaine version taguée.
 - **Taille des emotes citées non réglable.** Les emotes sont clonées telles
   quelles ; Lua n'expose aucun moyen de les redimensionner. Une emote haute peut
   faire grandir la ligne de citation.
