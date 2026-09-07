@@ -39,6 +39,11 @@ mais reste en veille, et écrit pourquoi dans la console.
 Prendre donc le [build nightly](https://github.com/SevenTV/chatterino7/releases/tag/nightly-build)
 (`Chatterino7TV.Nightly.Installer.exe`), puis **le lancer au moins une fois**.
 
+Pour savoir si un build convient : `Settings → About` donne la date de
+compilation et le commit. Le numéro de version affiché est celui de l'amont dont
+le nightly dérive, pas le sien — un nightly « 2.5.5 » de septembre 2026 est bien
+plus récent que le tag v7.5.5.
+
 SevenTV marque ce build comme expérimental. C'est la contrainte du projet en
 l'état, pas une préférence.
 

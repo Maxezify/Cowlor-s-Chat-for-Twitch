@@ -20,15 +20,20 @@ arrivées **après** la v7.5.5 : sur la stable, il n'existe aucun moyen de réag
 un message ni de découvrir les canaux, donc aucune façon de faire ce que ce
 plugin fait.
 
-Sur une version trop ancienne, le plugin se charge, se met en veille et écrit la
-raison dans la console — il ne plante pas.
+Un nightly de septembre 2026 (commit `5a77ec758`) les a, vérifié. Sur une version
+trop ancienne, le plugin se charge, se met en veille et écrit la raison dans la
+console — il ne plante pas.
+
+Attention à ne pas se fier au numéro affiché : un nightly annonce la version
+amont dont il dérive (« 2.5.5 »), pas son âge. C'est la date de build qui
+compte.
 
 Le nightly est explicitement marqué expérimental par SevenTV. C'est un vrai coût
 à peser : voir « Limites connues ».
 
 ## État
 
-**v0.1.1 — citations de réponse.** Le reste est en chantier, voir la feuille de
+**v0.1.2 — citations de réponse.** Le reste est en chantier, voir la feuille de
 route plus bas.
 
 | | |

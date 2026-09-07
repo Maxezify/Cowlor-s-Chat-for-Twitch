@@ -544,6 +544,7 @@ M.rebuild_reply = rebuild_reply
 -- =============================================================================
 
 local hooked = {}      -- nom de canal -> ConnectionHandle
+local warned_no_events = false
 local reentrant = false
 
 local function on_message(channel, msg)
@@ -595,6 +596,14 @@ local function hook_channel(channel)
     if connected then
         hooked[name] = handle
         debug("canal branché :", name)
+    elseif not warned_no_events then
+        -- Une seule fois : ce balayage tourne toutes les trois secondes, et une
+        -- version dépourvue de l'événement le ferait échouer indéfiniment.
+        warned_no_events = true
+        log(c2.LogLevel.Critical,
+            "Channel:on_message_appended est absent de cette version de " ..
+            "Chatterino — le plugin ne peut rien faire. Il faut un build " ..
+            "nightly de Chatterino7. Détail :", tostring(handle))
     end
 end
 
@@ -646,26 +655,21 @@ M.CONFIG = CONFIG
 
 --- Vérifie que la version installée expose ce dont le plugin a besoin.
 ---
---- `Channel:on_message_appended` et `c2.windows` n'existent PAS dans Chatterino7
+--- `Channel:on_message_appended` et `c2.windows` n'existent pas dans Chatterino7
 --- v7.5.5 : ils sont arrivés après. Sans eux il n'y a ni moyen d'être prévenu
---- qu'un message arrive, ni moyen d'énumérer les canaux ouverts — et donc aucune
+--- qu'un message arrive, ni moyen d'énumérer les canaux ouverts — donc aucune
 --- façon de faire ce que ce plugin fait.
 ---
---- On préfère le dire clairement plutôt que de se taire ou de planter.
+--- On ne teste ici que `c2.windows`, qui est un simple champ global. Sonder
+--- `on_message_appended` demanderait de fabriquer un canal, et un faux négatif
+--- mettrait le plugin en veille alors qu'il fonctionnerait : c'est `hook_channel`
+--- qui constatera son absence, au moment où il essaie de s'en servir.
 ---@return boolean ok
 ---@return string? reason
 local function check_api()
-    if type(c2.windows) ~= "userdata" and type(c2.windows) ~= "table" then
+    if c2.windows == nil then
         return false, "c2.windows"
     end
-
-    -- On ne peut pas tester la méthode sans un canal ; on se contente de vérifier
-    -- que la table de métadonnées de Channel la connaît, via un canal quelconque.
-    local probe = c2.Channel and c2.Channel.by_name and c2.Channel.by_name("/whispers")
-    if probe and probe.on_message_appended == nil then
-        return false, "Channel:on_message_appended"
-    end
-
     return true
 end
 
@@ -695,7 +699,7 @@ if c2 then
             return
         end
 
-        log(c2.LogLevel.Info, "v0.1.1 — citations de réponse")
+        log(c2.LogLevel.Info, "v0.1.2 — citations de réponse")
         sweep_channels()
     end)
 
