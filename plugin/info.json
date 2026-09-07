@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Chatterino/chatterino2/master/docs/plugin-info.schema.json",
+  "name": "Cowlor's Chat",
+  "description": "Rend les citations de réponse lisibles en entier, emotes comprises, comme BetterTwitchChat le fait sur le chat web de Twitch.",
+  "authors": ["Maxezify"],
+  "homepage": "https://github.com/Maxezify/Cowlor-s-Chat-for-Twitch",
+  "tags": ["utility", "appearance", "replies"],
+  "version": "0.1.0",
+  "license": "MIT",
+  "permissions": []
+}
