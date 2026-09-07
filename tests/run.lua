@@ -500,6 +500,28 @@ test("une chaîne nommée mais non jointe est ignorée sans lever", function()
     plugin.CONFIG.channels = previous
 end)
 
+test("le remplacement est différé hors du signal", function()
+    -- Remplacer PENDANT `messageAppended` ne produit rien de visible :
+    -- ChannelView::messageReplaced cherche le message d'origine dans sa propre
+    -- liste de calques, ne l'y trouve pas encore, et renonce silencieusement.
+    -- La vue pose ensuite le calque du message original. Ce test empêche de
+    -- retomber dedans.
+    local channel, _, reply = scenario({
+        mock.element({ type = "text", words = { "salut" }, flags = EF.Text }),
+    }, "salut", { "salut" })
+
+    local timers_before = #mock.c2.timers
+    plugin.on_message(channel, reply)
+
+    equal(#channel.replacements, 0,
+        "aucun remplacement ne doit avoir lieu pendant le signal")
+    check(#mock.c2.timers > timers_before, "un report doit être programmé")
+
+    mock.c2.timers[#mock.c2.timers].cb()
+    equal(#channel.replacements, 1,
+        "le remplacement doit avoir lieu au tour de boucle suivant")
+end)
+
 test("répare les réponses déjà affichées", function()
     -- Sans cela, brancher un canal ne produit rien de visible tant qu'une
     -- nouvelle réponse n'arrive pas — et « ça ne marche pas » devient

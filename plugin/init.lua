@@ -92,7 +92,7 @@ local CONFIG = {
 
 local M = {}
 
-local VERSION = "0.4.0"
+local VERSION = "0.5.0"
 M.VERSION = VERSION
 
 local function log(level, ...)
@@ -573,28 +573,56 @@ local function on_message(channel, msg)
         return
     end
 
-    -- Un message déjà affiché est gelé : on ne peut pas le modifier sur place, il
-    -- faut construire un remplaçant. On teste tout de même, parce que rien ne
-    -- garantit que ce soit vrai à tous les points d'appel.
-    local ok, replacement = pcall(rebuild_reply, channel, msg)
-    if not ok then
-        log(c2.LogLevel.Warning, "reconstruction échouée :", replacement)
-        return
-    end
-    if not replacement then
-        return
-    end
+    -- LE REMPLACEMENT DOIT SORTIR DU SIGNAL.
+    --
+    -- `on_message_appended` est émis depuis `Channel::addMessage`, juste après
+    -- `messages_.pushBack`. Les slots sont invoqués dans l'ordre de connexion, et
+    -- le nôtre passe avant celui de la vue quand le plugin s'est branché avant
+    -- que le split existe — ce qui est le cas normal avec la fenêtre superposée,
+    -- branchée par son nom au démarrage.
+    --
+    -- Remplacer à cet instant ne produit rien de visible :
+    --
+    --     void ChannelView::messageReplaced(size_t hint, const MessagePtr &prev, …)
+    --     {
+    --         auto optItem = this->messages_.find(hint, [&](const auto &it) {
+    --             return it->getMessagePtr() == prev;
+    --         });
+    --         if (!optItem) { return; }        // abandon silencieux
+    --
+    -- La vue n'a pas encore ajouté le message d'origine, donc elle ne le trouve
+    -- pas et renonce sans erreur. Son propre slot pose ensuite le calque du
+    -- message ORIGINAL. La file du canal porte la version reconstruite, l'écran
+    -- affiche l'ancienne — et rien ne le signale.
+    --
+    -- En différant d'un tour de boucle, toutes les vues ont posé leur calque et
+    -- `messageReplaced` les met correctement à jour.
+    c2.later(function()
+        if reentrant then
+            return
+        end
 
-    reentrant = true
-    local replaced, err = pcall(function()
-        channel:replace_message(msg, replacement)
-    end)
-    reentrant = false
+        local ok, replacement = pcall(rebuild_reply, channel, msg)
+        if not ok then
+            log(c2.LogLevel.Warning, "reconstruction échouée :", replacement)
+            return
+        end
+        if not replacement then
+            return
+        end
 
-    if not replaced then
-        log(c2.LogLevel.Warning, "remplacement échoué :", err)
-    end
+        reentrant = true
+        local replaced, err = pcall(function()
+            channel:replace_message(msg, replacement)
+        end)
+        reentrant = false
+
+        if not replaced then
+            log(c2.LogLevel.Warning, "remplacement échoué :", err)
+        end
+    end, 0)
 end
+M.on_message = on_message
 
 --- Branche un canal, s'il ne l'est pas déjà.
 ---@param channel table

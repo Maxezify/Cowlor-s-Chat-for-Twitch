@@ -33,12 +33,12 @@ Le nightly est explicitement marqué expérimental par SevenTV. C'est un vrai co
 
 ## État
 
-**v0.4.0 — le plugin se signale dans le chat quand il se branche, et répare les messages déjà affichés.** Le reste est en chantier, voir la feuille de
+**v0.5.0 — les citations sont reconstruites.** Le reste est en chantier, voir la feuille de
 route plus bas.
 
 | | |
 |---|---|
-| Logique | testée — 44 vérifications contre une API `c2` simulée |
+| Logique | testée — 45 vérifications contre une API `c2` simulée |
 | Rendu réel | **jamais exécuté dans Chatterino** |
 
 Ce plugin n'a pas encore tourné une seule fois dans un vrai Chatterino. La
@@ -62,6 +62,35 @@ Le plugin le répare :
   emote, mais `Message:append_element()` clone celle qu'on lui passe.
 - **Repli propre.** Parent sorti de l'historique : on réémet le texte complet
   sans emotes. La troncature disparaît quand même.
+
+## Le piège : ne jamais remplacer pendant le signal
+
+Il a coûté quatre versions, il mérite d'être écrit.
+
+`on_message_appended` est émis depuis `Channel::addMessage`, juste après
+`messages_.pushBack`. Les slots partent dans l'ordre de connexion, et celui du
+plugin passe avant celui de la vue dès lors qu'il s'est branché avant que le
+split existe — le cas normal avec la fenêtre superposée, branchée par son nom au
+démarrage.
+
+Remplacer à cet instant ne produit **rien de visible** :
+
+```cpp
+void ChannelView::messageReplaced(size_t hint, const MessagePtr &prev, …)
+{
+    auto optItem = this->messages_.find(hint, [&](const auto &it) {
+        return it->getMessagePtr() == prev;
+    });
+    if (!optItem) { return; }        // abandon silencieux
+```
+
+La vue n'a pas encore posé le calque du message d'origine : elle ne le trouve
+pas et renonce sans erreur. Son propre slot pose ensuite le calque du message
+**original**. La file du canal porte la version reconstruite, l'écran affiche
+l'ancienne, et rien ne le signale — ni exception, ni journal.
+
+Le remplacement est donc différé d'un tour de boucle (`c2.later(…, 0)`). Un test
+verrouille ce comportement.
 
 ## `/cowlors`
 
