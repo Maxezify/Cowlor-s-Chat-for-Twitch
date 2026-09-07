@@ -575,16 +575,24 @@ local function on_message(channel, msg)
     end
 end
 
-local function hook_channel(channel)
+--- Branche un canal, s'il ne l'est pas déjà.
+---@param channel table
+---@param force boolean? rebrancher même si déjà connu
+---@return boolean hooked
+---@return string? name
+local function hook_channel(channel, force)
     if not channel then
-        return
+        return false
     end
 
     local ok, name = pcall(function()
         return channel:get_name()
     end)
-    if not ok or not name or name == "" or hooked[name] then
-        return
+    if not ok or not name or name == "" then
+        return false
+    end
+    if hooked[name] and not force then
+        return true, name
     end
 
     local connected, handle = pcall(function()
@@ -596,6 +604,7 @@ local function hook_channel(channel)
     if connected then
         hooked[name] = handle
         debug("canal branché :", name)
+        return true, name
     elseif not warned_no_events then
         -- Une seule fois : ce balayage tourne toutes les trois secondes, et une
         -- version dépourvue de l'événement le ferait échouer indéfiniment.
@@ -605,12 +614,21 @@ local function hook_channel(channel)
             "Chatterino — le plugin ne peut rien faire. Il faut un build " ..
             "nightly de Chatterino7. Détail :", tostring(handle))
     end
+
+    return false, name
 end
 
 --- Parcourt l'arbre des fenêtres pour découvrir les canaux ouverts.
---- Chatterino n'émet aucun événement à l'ouverture d'un split : ce balayage
---- périodique est la seule voie. Il inclut la fenêtre superposée au navigateur,
---- qui est un `WindowType.Attached` comme les autres.
+---
+--- ATTENTION — ce balayage ne voit PAS la fenêtre superposée au navigateur.
+--- `c2.windows:all()` renvoie `std::vector<Window *>`, et `AttachedWindow` est un
+--- `QWidget` qui n'est jamais inscrit dans cette liste : il tient son propre
+--- registre statique. Le canal affiché dans la superposition reste donc invisible
+--- ici, et c'est la commande `/cowlors` qui permet de le brancher à la main.
+---
+--- Ce n'est pas si grave qu'il y paraît : les canaux de Chatterino sont partagés,
+--- donc brancher « #chaine » depuis n'importe quel split touche le même objet que
+--- celui qu'affiche la superposition.
 local function sweep_channels()
     local ok, err = pcall(function()
         for _, window in ipairs(c2.windows:all()) do
@@ -646,6 +664,84 @@ local function sweep_channels()
 
     c2.later(sweep_channels, CONFIG.channelSweepMs)
 end
+
+-- =============================================================================
+-- Commande de diagnostic
+-- =============================================================================
+
+local VERSION = "0.2.0"
+
+--- `/cowlors` — dit ce que le plugin voit, et branche le canal courant.
+---
+--- Cette commande existe pour deux raisons. La première est le diagnostic : sans
+--- elle, un plugin qui ne fait rien est indiscernable d'un plugin qui fait mal
+--- son travail. La seconde est fonctionnelle : la fenêtre superposée au
+--- navigateur échappe au balayage automatique, et c'est ici qu'on la rattrape.
+---@param ctx table CommandContext
+local function command(ctx)
+    local channel = ctx.channel
+    if not channel then
+        return
+    end
+
+    local function say(text)
+        pcall(function()
+            channel:add_system_message(text)
+        end)
+    end
+
+    say(("Cowlor's Chat v%s"):format(VERSION))
+
+    if not FLAGS then
+        say("drapeaux NON résolus — le plugin est inactif, voir la console")
+        return
+    end
+
+    -- Branche le canal d'où la commande est lancée. C'est le geste utile dans la
+    -- fenêtre superposée, que le balayage ne peut pas atteindre.
+    local ok, name = hook_channel(channel)
+    say(ok and ("canal branché : " .. tostring(name))
+           or ("échec du branchement : " .. tostring(name)))
+
+    local names = {}
+    for hooked_name in pairs(hooked) do
+        names[#names + 1] = hooked_name
+    end
+    table.sort(names)
+    say(("canaux branchés (%d) : %s"):format(
+        #names, #names > 0 and table.concat(names, ", ") or "aucun"))
+
+    -- Le test qui tranche : est-ce qu'on SAIT repérer une citation dans ce qui
+    -- est déjà affiché ? Si ce compte est nul alors qu'il y a des réponses à
+    -- l'écran, le défaut est dans la détection. S'il est non nul mais que le
+    -- « … » persiste, le défaut est dans le branchement ou le remplacement.
+    local scanned, found, example = 0, 0, nil
+    pcall(function()
+        local snapshot = channel:message_snapshot(CONFIG.reply.lookbackMessages)
+        scanned = #snapshot
+        for i = #snapshot, 1, -1 do
+            local info = M.find_reply_context(snapshot[i]:elements())
+            if info then
+                found = found + 1
+                example = example or info
+            end
+        end
+    end)
+
+    say(("réponses repérées : %d sur %d messages examinés"):format(found, scanned))
+    if example then
+        say(("exemple — parent @%s, %d mots dans la citation"):format(
+            tostring(example.name), #example.words))
+    elseif scanned > 0 then
+        say("aucune citation repérée : soit il n'y a pas de réponse à l'écran, "
+            .. "soit la détection ne colle plus au DOM de Chatterino")
+    end
+
+    say("les nouvelles réponses de ce canal devraient maintenant être reconstruites")
+end
+
+M.command = command
+M.hook_channel = hook_channel
 
 -- =============================================================================
 -- Démarrage
@@ -699,7 +795,14 @@ if c2 then
             return
         end
 
-        log(c2.LogLevel.Info, "v0.1.2 — citations de réponse")
+        -- Chatterino enregistre les commandes avec leur barre oblique.
+        if not c2.register_command("/cowlors", command) then
+            log(c2.LogLevel.Warning,
+                "la commande /cowlors n'a pas pu être enregistrée (déjà prise ?)")
+        end
+
+        log(c2.LogLevel.Info, "v" .. VERSION ..
+            " — citations de réponse. Tape /cowlors dans un chat pour un état des lieux.")
         sweep_channels()
     end)
 

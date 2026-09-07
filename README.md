@@ -33,19 +33,19 @@ Le nightly est explicitement marqué expérimental par SevenTV. C'est un vrai co
 
 ## État
 
-**v0.1.2 — citations de réponse.** Le reste est en chantier, voir la feuille de
+**v0.2.0 — citations de réponse, et une commande pour savoir ce qui se passe.** Le reste est en chantier, voir la feuille de
 route plus bas.
 
 | | |
 |---|---|
-| Logique | testée — 34 vérifications contre une API `c2` simulée |
+| Logique | testée — 39 vérifications contre une API `c2` simulée |
 | Rendu réel | **jamais exécuté dans Chatterino** |
 
 Ce plugin n'a pas encore tourné une seule fois dans un vrai Chatterino. La
 logique est vérifiée, le comportement à l'écran ne l'est pas. Les points à
 contrôler au premier lancement sont listés dans [`docs/INSTALL.md`](docs/INSTALL.md).
 
-## Ce que fait la v0.1
+## Ce que fait le plugin
 
 Chatterino construit la citation d'une réponse avec un `SingleLineTextElement`
 alimenté par `threadRoot->messageText` : **du texte brut, coupé à une ligne avec
@@ -62,6 +62,30 @@ Le plugin le répare :
   emote, mais `Message:append_element()` clone celle qu'on lui passe.
 - **Repli propre.** Parent sorti de l'historique : on réémet le texte complet
   sans emotes. La troncature disparaît quand même.
+
+## `/cowlors`
+
+Tape `/cowlors` dans un chat. La commande dit ce que le plugin voit — version,
+canaux branchés, nombre de réponses qu'il sait repérer dans ce qui est affiché —
+**et branche le canal courant**.
+
+Ce second point n'est pas un confort, c'est une nécessité : voir plus bas.
+
+## ⚠️ La fenêtre superposée échappe au balayage automatique
+
+Le plugin découvre les canaux en parcourant `c2.windows:all()`. Or cette fonction
+renvoie `std::vector<Window *>`, et **`AttachedWindow` — la fenêtre posée sur le
+navigateur — est un `QWidget`**, jamais inscrit dans cette liste : elle tient son
+propre registre statique. Son canal est donc invisible au balayage, et les
+réponses n'y sont pas reconstruites.
+
+**Le contournement : `/cowlors` dans la fenêtre superposée**, une fois par
+chaîne. Les canaux de Chatterino étant partagés, brancher « #chaine » depuis
+n'importe quel split touche le même objet que celui qu'affiche la superposition.
+
+C'est une vraie limite, pas une commodité. La lever proprement demanderait que
+Chatterino expose les fenêtres attachées, ou un événement à l'ouverture d'un
+split — une contribution amont utile à tous.
 
 ## Feuille de route
 

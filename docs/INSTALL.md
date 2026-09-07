@@ -93,6 +93,14 @@ qu'il est **désactivé par défaut** et que c'est l'équivalent de ton
 Ce plugin n'a jamais tourné dans un vrai Chatterino. Voici ce qu'il faut
 regarder, dans l'ordre.
 
+**0. Lance `/cowlors` dans le chat.** C'est le point de départ de tout
+diagnostic : la commande dit la version chargée, les canaux branchés, et combien
+de réponses le plugin sait repérer dans ce qui est déjà affiché.
+
+**Dans la fenêtre superposée au navigateur, cette commande est obligatoire**,
+une fois par chaîne : le balayage automatique ne voit pas cette fenêtre (voir le
+README). Si le « … » persiste, c'est la première chose à essayer.
+
 **1. Le plugin se charge.** `Settings → Plugins` doit lister « Cowlor's Chat »
 sans erreur. Sinon, la console de Chatterino donne la raison.
 

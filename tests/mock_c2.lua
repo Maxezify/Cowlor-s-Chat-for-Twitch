@@ -71,6 +71,15 @@ function c2.log(level, ...)
     c2.logs[#c2.logs + 1] = { level = level, args = { ... } }
 end
 
+c2.commands = {}
+function c2.register_command(name, fn)
+    if c2.commands[name] then
+        return false
+    end
+    c2.commands[name] = fn
+    return true
+end
+
 c2.timers = {}
 function c2.later(cb, msec)
     c2.timers[#c2.timers + 1] = { cb = cb, msec = msec }
@@ -213,6 +222,10 @@ function Channel:replace_message(old, replacement)
     error("message introuvable")
 end
 
+function Channel:add_system_message(text)
+    self.system_messages[#self.system_messages + 1] = text
+end
+
 function Channel:on_message_appended(cb)
     self._callbacks[#self._callbacks + 1] = cb
     return { is_connected = function() return true end }
@@ -224,6 +237,7 @@ function mock.channel(name)
         _messages = {},
         _callbacks = {},
         replacements = {},
+        system_messages = {},
     }, Channel)
 end
 

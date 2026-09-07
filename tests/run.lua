@@ -440,6 +440,56 @@ test("un message ordinaire n'est pas reconstruit", function()
 end)
 
 -- ---------------------------------------------------------------------------
+print("\ncommande de diagnostic")
+-- ---------------------------------------------------------------------------
+-- Le balayage automatique ne voit pas la fenêtre superposée au navigateur :
+-- `c2.windows:all()` renvoie des `Window*`, et `AttachedWindow` est un `QWidget`
+-- qui n'y figure pas. `/cowlors` est le rattrapage — et le seul moyen de savoir
+-- ce que le plugin voit quand il ne fait rien.
+
+test("branche le canal d'où elle est lancée", function()
+    local channel = mock.channel("#superposition")
+    plugin.command({ channel = channel })
+    equal(#channel._callbacks, 1, "le canal doit avoir été branché")
+end)
+
+test("rapporte l'état sans lever", function()
+    local channel, _, _ = scenario({
+        mock.element({ type = "text", words = { "salut" }, flags = EF.Text }),
+    }, "salut", { "salut" })
+
+    plugin.command({ channel = channel })
+    check(#channel.system_messages > 0, "un rapport doit être écrit")
+
+    local report = table.concat(channel.system_messages, "\n")
+    check(report:find("Cowlor's Chat v"), "la version doit figurer au rapport")
+    check(report:find("réponses repérées : 1"), "la réponse présente doit être comptée")
+end)
+
+test("signale l'absence de citation plutôt que de se taire", function()
+    local channel = mock.channel("#calme")
+    mock.push(channel, chat_message({ display_name = "Bob", message_text = "coucou" }))
+
+    plugin.command({ channel = channel })
+    local report = table.concat(channel.system_messages, "\n")
+    check(report:find("réponses repérées : 0"), "zéro doit être annoncé explicitement")
+    check(report:find("aucune citation repérée"), "le cas doit être expliqué")
+end)
+
+test("ne lève pas sans canal", function()
+    plugin.command({})
+end)
+
+test("hook_channel est idempotent", function()
+    local channel = mock.channel("#idem")
+    local ok1, name1 = plugin.hook_channel(channel)
+    local ok2, name2 = plugin.hook_channel(channel)
+    check(ok1 and ok2, "les deux appels doivent réussir")
+    equal(name1, name2)
+    equal(#channel._callbacks, 1, "un seul branchement, pas deux")
+end)
+
+-- ---------------------------------------------------------------------------
 print("\ncontrat de l'API simulée")
 -- ---------------------------------------------------------------------------
 

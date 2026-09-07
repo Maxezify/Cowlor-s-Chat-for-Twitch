@@ -10,12 +10,18 @@ Chemins donnés tels qu'ils apparaissent dans `Settings`.
 
 ## À cocher en priorité
 
-Ces deux-là changent le plus, et sont **désactivés par défaut**.
-
 | Réglage | Où | Équivalent chez toi |
 |---|---|---|
-| **Smooth scrolling on new messages** | Appearance | `smoothScrollMs: 1500` |
-| **Enable plugins** | Plugins | (indispensable au plugin) |
+| **Smooth scrolling on new messages** | Appearance | `smoothScrollMs: 1500` — **désactivé par défaut** |
+| **Enable plugins** | Plugins | indispensable au plugin — **désactivé par défaut** |
+| **Show timestamps** → décocher | Appearance | retire l'heure à gauche des messages |
+
+L'heure affichée devant chaque message se retire par ce seul décochage
+(`/appearance/messages/showTimestamps`). Aucun code n'est nécessaire, et le
+gain est réel sur une colonne étroite : autant de largeur rendue au texte.
+
+Si tu préfères la garder mais plus discrète, `Timestamp format` accepte un
+format court (`h:mm` par défaut, `H:mm` en 24 h).
 
 ## Réponses
 
