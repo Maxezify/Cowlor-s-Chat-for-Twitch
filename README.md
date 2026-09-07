@@ -33,12 +33,12 @@ Le nightly est explicitement marqué expérimental par SevenTV. C'est un vrai co
 
 ## État
 
-**v0.3.0 — citations de réponse. Pense à renseigner `CONFIG.channels`.** Le reste est en chantier, voir la feuille de
+**v0.4.0 — le plugin se signale dans le chat quand il se branche, et répare les messages déjà affichés.** Le reste est en chantier, voir la feuille de
 route plus bas.
 
 | | |
 |---|---|
-| Logique | testée — 41 vérifications contre une API `c2` simulée |
+| Logique | testée — 44 vérifications contre une API `c2` simulée |
 | Rendu réel | **jamais exécuté dans Chatterino** |
 
 Ce plugin n'a pas encore tourné une seule fois dans un vrai Chatterino. La

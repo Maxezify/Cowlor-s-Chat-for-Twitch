@@ -92,6 +92,9 @@ local CONFIG = {
 
 local M = {}
 
+local VERSION = "0.4.0"
+M.VERSION = VERSION
+
 local function log(level, ...)
     if c2 and c2.log then
         c2.log(level, "[cowlors-chat]", ...)
@@ -598,6 +601,39 @@ end
 ---@param force boolean? rebrancher même si déjà connu
 ---@return boolean hooked
 ---@return string? name
+--- Reconstruit les réponses DÉJÀ affichées dans un canal.
+---
+--- Sans cela, brancher un canal ne produit aucun effet visible tant qu'une
+--- nouvelle réponse n'arrive pas — ce qui rend impossible de distinguer « ça ne
+--- marche pas » de « rien ne s'est encore passé ». L'opération est idempotente :
+--- un message déjà reconstruit n'a plus de `single-line-text`, donc il est ignoré.
+---@param channel table
+---@return integer fixed
+local function rebuild_existing(channel)
+    local fixed = 0
+
+    pcall(function()
+        local snapshot = channel:message_snapshot(CONFIG.reply.lookbackMessages)
+        for i = 1, #snapshot do
+            local msg = snapshot[i]
+            local built = select(2, pcall(rebuild_reply, channel, msg))
+            if type(built) == "table" then
+                reentrant = true
+                local done = pcall(function()
+                    channel:replace_message(msg, built)
+                end)
+                reentrant = false
+                if done then
+                    fixed = fixed + 1
+                end
+            end
+        end
+    end)
+
+    return fixed
+end
+M.rebuild_existing = rebuild_existing
+
 local function hook_channel(channel, force)
     if not channel then
         return false
@@ -622,6 +658,15 @@ local function hook_channel(channel, force)
     if connected then
         hooked[name] = handle
         debug("canal branché :", name)
+
+        -- Rendre le branchement VISIBLE, et agir tout de suite sur l'existant.
+        -- Une ligne de console ne se voit pas ; un message dans le chat, si.
+        local fixed = rebuild_existing(channel)
+        pcall(function()
+            channel:add_system_message(("Cowlor's Chat v%s branché — %d citation%s reconstruite%s")
+                :format(VERSION, fixed, fixed > 1 and "s" or "", fixed > 1 and "s" or ""))
+        end)
+
         return true, name
     elseif not warned_no_events then
         -- Une seule fois : ce balayage tourne toutes les trois secondes, et une
@@ -720,8 +765,6 @@ end
 -- Commande de diagnostic
 -- =============================================================================
 
-local VERSION = "0.3.0"
-
 --- `/cowlors` — dit ce que le plugin voit, et branche le canal courant.
 ---
 --- Cette commande existe pour deux raisons. La première est le diagnostic : sans
@@ -747,20 +790,6 @@ local function command(ctx)
         say("drapeaux NON résolus — le plugin est inactif, voir la console")
         return
     end
-
-    -- Branche le canal d'où la commande est lancée. C'est le geste utile dans la
-    -- fenêtre superposée, que le balayage ne peut pas atteindre.
-    local ok, name = hook_channel(channel)
-    say(ok and ("canal branché : " .. tostring(name))
-           or ("échec du branchement : " .. tostring(name)))
-
-    local names = {}
-    for hooked_name in pairs(hooked) do
-        names[#names + 1] = hooked_name
-    end
-    table.sort(names)
-    say(("canaux branchés (%d) : %s"):format(
-        #names, #names > 0 and table.concat(names, ", ") or "aucun"))
 
     -- Le test qui tranche : est-ce qu'on SAIT repérer une citation dans ce qui
     -- est déjà affiché ? Si ce compte est nul alors qu'il y a des réponses à
@@ -788,7 +817,23 @@ local function command(ctx)
             .. "soit la détection ne colle plus au DOM de Chatterino")
     end
 
-    say("les nouvelles réponses de ce canal devraient maintenant être reconstruites")
+    -- Branche le canal d'où la commande est lancée. C'est le geste utile dans la
+    -- fenêtre superposée, que le balayage ne peut pas atteindre.
+    local ok, name = hook_channel(channel)
+    say(ok and ("canal branché : " .. tostring(name))
+           or ("échec du branchement : " .. tostring(name)))
+
+    local names = {}
+    for hooked_name in pairs(hooked) do
+        names[#names + 1] = hooked_name
+    end
+    table.sort(names)
+    say(("canaux branchés (%d) : %s"):format(
+        #names, #names > 0 and table.concat(names, ", ") or "aucun"))
+
+    local fixed = rebuild_existing(channel)
+    say(("citations reconstruites à l'instant : %d"):format(fixed))
+    say("les nouvelles réponses de ce canal seront reconstruites à leur arrivée")
 end
 
 M.command = command

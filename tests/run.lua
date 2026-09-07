@@ -500,6 +500,40 @@ test("une chaîne nommée mais non jointe est ignorée sans lever", function()
     plugin.CONFIG.channels = previous
 end)
 
+test("répare les réponses déjà affichées", function()
+    -- Sans cela, brancher un canal ne produit rien de visible tant qu'une
+    -- nouvelle réponse n'arrive pas — et « ça ne marche pas » devient
+    -- indiscernable de « rien ne s'est encore passé ».
+    local channel, _, reply = scenario({
+        mock.element({ type = "text", words = { "salut" }, flags = EF.Text }),
+    }, "salut", { "salut" })
+
+    local fixed = plugin.rebuild_existing(channel)
+    equal(fixed, 1, "la réponse à l'écran doit être reconstruite")
+
+    for _, el in ipairs(channel._messages[2]:elements()) do
+        check(el.type ~= "single-line-text", "la citation tronquable doit avoir disparu")
+    end
+end)
+
+test("la réparation rétroactive est idempotente", function()
+    local channel = scenario({
+        mock.element({ type = "text", words = { "salut" }, flags = EF.Text }),
+    }, "salut", { "salut" })
+
+    equal(plugin.rebuild_existing(channel), 1, "premier passage")
+    equal(plugin.rebuild_existing(channel), 0, "second passage : plus rien à faire")
+end)
+
+test("le branchement se signale dans le chat", function()
+    -- Une ligne de console ne se voit pas ; un message dans le chat, si.
+    local channel = mock.channel("#visible")
+    plugin.hook_channel(channel)
+    local said = table.concat(channel.system_messages, "\n")
+    check(said:find("Cowlor's Chat v"), "le branchement doit être annoncé")
+    check(said:find(plugin.VERSION, 1, true), "la version doit être annoncée")
+end)
+
 test("hook_channel est idempotent", function()
     local channel = mock.channel("#idem")
     local ok1, name1 = plugin.hook_channel(channel)
