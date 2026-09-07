@@ -59,9 +59,27 @@ local CONFIG = {
         lineTint = nil,
     },
 
+    -- Chaînes à brancher par leur nom, en minuscules et sans « # ».
+    --
+    -- C'EST LE RÉGLAGE IMPORTANT si tu utilises la superposition au navigateur.
+    -- Le balayage automatique parcourt `c2.windows:all()`, qui ne renvoie que des
+    -- `Window` ; or l'extension rattache le canal à un `AttachedWindow`, qui est
+    -- un `QWidget` absent de cette liste. La chaîne que tu regardes est donc
+    -- invisible au balayage.
+    --
+    -- Elle est en revanche bien joignable par son nom : le gestionnaire `select`
+    -- de Chatterino appelle `getOrAddChannel(name)`, ce qui l'inscrit dans la
+    -- table des canaux que `by_name` interroge. Les nommer ici suffit.
+    --
+    -- Le branchement se fait dès que la chaîne est ouverte, et le balayage
+    -- réessaie, donc l'ordre et le moment n'importent pas.
+    --
+    --   channels = { "zerator", "domingo", "ponce" },
+    channels = {},
+
     -- Intervalle de balayage pour découvrir les canaux ouverts, en millisecondes.
     -- Chatterino n'expose aucun événement « un canal vient de s'ouvrir » : la
-    -- seule voie est de parcourir périodiquement l'arbre des fenêtres.
+    -- seule voie est de réessayer périodiquement.
     channelSweepMs = 3000,
 
     -- Journalise les décisions dans la console de Chatterino.
@@ -629,7 +647,20 @@ end
 --- Ce n'est pas si grave qu'il y paraît : les canaux de Chatterino sont partagés,
 --- donc brancher « #chaine » depuis n'importe quel split touche le même objet que
 --- celui qu'affiche la superposition.
+local last_hooked_count = -1
+
 local function sweep_channels()
+    -- Les chaînes nommées dans CONFIG.channels, d'abord : c'est la seule voie
+    -- pour la fenêtre superposée.
+    for _, name in ipairs(CONFIG.channels or {}) do
+        pcall(function()
+            local channel = c2.Channel.by_name(name)
+            if channel then
+                hook_channel(channel)
+            end
+        end)
+    end
+
     local ok, err = pcall(function()
         for _, window in ipairs(c2.windows:all()) do
             local notebook = window.notebook
@@ -662,6 +693,26 @@ local function sweep_channels()
         end
     end
 
+    -- Le nombre de canaux branchés est LA information qui dit si le plugin a
+    -- prise sur quoi que ce soit. On la journalise à chaque changement, au
+    -- niveau Info : rester muet quand on ne trouve rien est ce qui a rendu le
+    -- premier diagnostic si long.
+    local count = 0
+    for _ in pairs(hooked) do
+        count = count + 1
+    end
+    if count ~= last_hooked_count then
+        last_hooked_count = count
+        if count == 0 then
+            log(c2.LogLevel.Info,
+                "aucun canal branché. Si tu utilises la superposition au " ..
+                "navigateur, nomme tes chaînes dans CONFIG.channels ou tape " ..
+                "/cowlors dans le chat.")
+        else
+            log(c2.LogLevel.Info, ("canaux branchés : %d"):format(count))
+        end
+    end
+
     c2.later(sweep_channels, CONFIG.channelSweepMs)
 end
 
@@ -669,7 +720,7 @@ end
 -- Commande de diagnostic
 -- =============================================================================
 
-local VERSION = "0.2.0"
+local VERSION = "0.3.0"
 
 --- `/cowlors` — dit ce que le plugin voit, et branche le canal courant.
 ---
@@ -742,6 +793,7 @@ end
 
 M.command = command
 M.hook_channel = hook_channel
+M.sweep_channels = sweep_channels
 
 -- =============================================================================
 -- Démarrage

@@ -33,12 +33,12 @@ Le nightly est explicitement marqué expérimental par SevenTV. C'est un vrai co
 
 ## État
 
-**v0.2.0 — citations de réponse, et une commande pour savoir ce qui se passe.** Le reste est en chantier, voir la feuille de
+**v0.3.0 — citations de réponse. Pense à renseigner `CONFIG.channels`.** Le reste est en chantier, voir la feuille de
 route plus bas.
 
 | | |
 |---|---|
-| Logique | testée — 39 vérifications contre une API `c2` simulée |
+| Logique | testée — 41 vérifications contre une API `c2` simulée |
 | Rendu réel | **jamais exécuté dans Chatterino** |
 
 Ce plugin n'a pas encore tourné une seule fois dans un vrai Chatterino. La
@@ -79,13 +79,37 @@ navigateur — est un `QWidget`**, jamais inscrit dans cette liste : elle tient 
 propre registre statique. Son canal est donc invisible au balayage, et les
 réponses n'y sont pas reconstruites.
 
-**Le contournement : `/cowlors` dans la fenêtre superposée**, une fois par
-chaîne. Les canaux de Chatterino étant partagés, brancher « #chaine » depuis
-n'importe quel split touche le même objet que celui qu'affiche la superposition.
+Vérifié dans le gestionnaire `select` de Chatterino :
 
-C'est une vraie limite, pas une commodité. La lever proprement demanderait que
-Chatterino expose les fenêtres attachées, ou un événement à l'ouverture d'un
-split — une contribution amont utile à tous.
+```cpp
+auto channel = getApp()->getTwitch()->getOrAddChannel(name);
+setWatchingChannel(channel);
+if (attach) {
+    auto *window = AttachedWindow::getForeground(args);  // pas un Window
+    window->setChannel(getOrAddChannel(name));
+}
+```
+
+**La solution : nommer tes chaînes dans `CONFIG.channels`**, en haut de
+`init.lua` :
+
+```lua
+channels = { "zerator", "domingo", "ponce" },
+```
+
+`getOrAddChannel` inscrit la chaîne dans la table que `by_name` interroge : elle
+est donc parfaitement joignable par son nom, même si aucune fenêtre ne la porte.
+Le balayage réessaie toutes les trois secondes, donc le branchement se fait dès
+que tu ouvres la chaîne, quel que soit l'ordre.
+
+`/cowlors` reste utile pour une chaîne de passage, ou pour vérifier l'état.
+
+La console dit toujours combien de canaux sont branchés, et le dit explicitement
+quand il n'y en a aucun. Rester muet dans ce cas est ce qui a rendu le premier
+diagnostic si long.
+
+Lever proprement la limite demanderait que Chatterino expose les fenêtres
+attachées, ou un accès au canal regardé — une contribution amont utile à tous.
 
 ## Feuille de route
 

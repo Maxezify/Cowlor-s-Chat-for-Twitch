@@ -480,6 +480,26 @@ test("ne lève pas sans canal", function()
     plugin.command({})
 end)
 
+test("le balayage branche les chaînes nommées dans CONFIG.channels", function()
+    -- Le cas de la fenêtre superposée : le canal existe et est joint, mais
+    -- aucune fenêtre ne le porte. Seul le nom permet de le retrouver.
+    local channel = mock.join(mock.channel("superposee"))
+    local previous = plugin.CONFIG.channels
+    plugin.CONFIG.channels = { "superposee" }
+
+    plugin.sweep_channels()
+
+    plugin.CONFIG.channels = previous
+    equal(#channel._callbacks, 1, "la chaîne nommée doit avoir été branchée")
+end)
+
+test("une chaîne nommée mais non jointe est ignorée sans lever", function()
+    local previous = plugin.CONFIG.channels
+    plugin.CONFIG.channels = { "chaine-jamais-ouverte" }
+    plugin.sweep_channels()
+    plugin.CONFIG.channels = previous
+end)
+
 test("hook_channel est idempotent", function()
     local channel = mock.channel("#idem")
     local ok1, name1 = plugin.hook_channel(channel)

@@ -231,6 +231,21 @@ function Channel:on_message_appended(cb)
     return { is_connected = function() return true end }
 end
 
+-- Registre des canaux joints, comme `TwitchIrcServer::channels`. `by_name` n'y
+-- trouve que ce qui a été effectivement ouvert — c'est la sémantique réelle de
+-- `getChannelOrEmpty`, qui renvoie vide pour une chaîne non jointe.
+c2.Channel = {}
+c2.joined = {}
+
+function c2.Channel.by_name(name)
+    return c2.joined[name]
+end
+
+function mock.join(channel)
+    c2.joined[channel:get_name()] = channel
+    return channel
+end
+
 function mock.channel(name)
     return setmetatable({
         _name = name or "#test",

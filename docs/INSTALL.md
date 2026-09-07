@@ -93,7 +93,15 @@ qu'il est **désactivé par défaut** et que c'est l'équivalent de ton
 Ce plugin n'a jamais tourné dans un vrai Chatterino. Voici ce qu'il faut
 regarder, dans l'ordre.
 
-**0. Lance `/cowlors` dans le chat.** C'est le point de départ de tout
+**0. Nomme tes chaînes dans `CONFIG.channels`**, en haut de `init.lua` — c'est
+l'étape qui rend le plugin opérant si tu utilises la superposition au navigateur.
+Sans elle, il ne trouve aucun canal à brancher et ne fait rien, silencieusement.
+
+```lua
+channels = { "zerator", "domingo" },
+```
+
+**0 bis. Lance `/cowlors` dans le chat.** C'est le point de départ de tout
 diagnostic : la commande dit la version chargée, les canaux branchés, et combien
 de réponses le plugin sait repérer dans ce qui est déjà affiché.
 
