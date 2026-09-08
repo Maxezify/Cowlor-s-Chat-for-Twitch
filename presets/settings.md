@@ -116,6 +116,19 @@ au-dessus sans remonter. Réglable par `hideScrollbarHighlights`.
 `highlight_color` sur le message et écraserait la couleur posée par tes règles.
 Si tu utilises les highlights — et tu devrais — laisse-le désactivé.
 
+## Filtre pour les dons groupés
+
+À créer une fois dans `Settings → Filters`, puis à activer sur le split
+(clic droit sur l'onglet → Filters) :
+
+```
+!(message.content contains "CCT_GIFT_HIDDEN")
+```
+
+Sans lui, le regroupement des dons fonctionne mais les lignes individuelles
+restent affichées. Lua ne sait pas supprimer un message : le plugin les marque,
+le filtre les écarte.
+
 ## Divers utile
 
 | Réglage | Où | Pourquoi |

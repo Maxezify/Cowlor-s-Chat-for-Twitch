@@ -94,6 +94,37 @@ local CONFIG = {
         lineTint = "#4b7c7c7c",
     },
 
+    -- --- Dons d'abonnements groupés -----------------------------------------
+    gifts = {
+        -- Regrouper « X offre 50 abonnements » et les N lignes « X a offert un
+        -- abonnement à Y » qui suivent, en une seule notice listant les
+        -- destinataires. Équivalent de `compact.aggregateGifts`.
+        enabled = true,
+
+        -- Délai pendant lequel les dons individuels sont rattachés à leur
+        -- annonce groupée. Au-delà, la fenêtre se ferme.
+        windowMs = 12000,
+
+        -- Marqueur ajouté au TEXTE des lignes devenues redondantes.
+        --
+        -- Lua ne sait pas supprimer un message : c'est un filtre de canal qui
+        -- les écarte. Le marqueur est posé sur `message_text`, que le langage
+        -- de filtre lit sous le nom `message.content` — vérifié dans
+        -- `IdentifierExpression.cpp`, qui le fait pointer sur
+        -- `Message::messageText`.
+        --
+        -- Il reste INVISIBLE à l'écran : l'affichage vient des éléments, pas de
+        -- ce champ. Sans filtre configuré, les lignes s'affichent donc comme
+        -- avant, sans marqueur apparent — le plugin ne dégrade rien.
+        --
+        -- Le filtre à créer dans Settings → Filters :
+        --     !(message.content contains "CCT_GIFT_HIDDEN")
+        marker = "CCT_GIFT_HIDDEN",
+
+        -- Au-delà, la liste est tronquée et le reste compté.
+        maxRecipients = 40,
+    },
+
     -- Chaînes à brancher par leur nom, en minuscules et sans « # ».
     --
     -- C'EST LE RÉGLAGE IMPORTANT si tu utilises la superposition au navigateur.
@@ -127,7 +158,7 @@ local CONFIG = {
 
 local M = {}
 
-local VERSION = "0.10.0"
+local VERSION = "0.11.0"
 M.VERSION = VERSION
 
 local function log(level, ...)
@@ -618,7 +649,8 @@ end
 --- qui sort de la recherche, un horodatage qui saute.
 ---@param msg table
 ---@return table
-local function carry_over(msg)
+local function carry_over(msg, opts)
+    opts = opts or {}
     local init = {
         flags = msg.flags,
         id = msg.id,
@@ -643,7 +675,7 @@ local function carry_over(msg)
     local hl = msg.highlight_color
     if type(hl) == "string" and hl ~= "" then
         init.highlight_color = hl
-    elseif CONFIG.reply.lineTint then
+    elseif opts.tint and CONFIG.reply.lineTint then
         init.highlight_color = CONFIG.reply.lineTint
 
         -- Poser la couleur ne suffit pas. `MessageLayout::paint` ne mélange le
@@ -743,7 +775,7 @@ local function rebuild_reply(channel, msg)
         }
     end
 
-    local init = carry_over(msg)
+    local init = carry_over(msg, { tint = true })
     local spliced, quote_start =
         M.splice_elements(elements, ctx, quote, CONFIG.reply.hidePrefix)
     init.elements = spliced
@@ -768,6 +800,199 @@ local function rebuild_reply(channel, msg)
 end
 
 M.rebuild_reply = rebuild_reply
+
+
+-- =============================================================================
+-- Dons d'abonnements groupés
+-- =============================================================================
+--
+-- Twitch annonce un don groupé par une notice « X is gifting N Tier T Subs to
+-- CHAINE's community! », puis envoie N lignes « X gifted a Tier T sub to Y! ».
+-- Le chat se remplit de N+1 lignes pour un seul événement.
+--
+-- Ces textes viennent du serveur Twitch (`system-msg`), pas de la traduction de
+-- Chatterino : ils sont en anglais quelle que soit la langue de l'interface.
+-- Les reconnaître par leur forme est donc stable — contrairement au « Replying
+-- to », qui, lui, est traduit.
+--
+-- Note : `SUB_MESSAGE_TYPES` de Chatterino vaut {"sub", "subgift", "resub"} ;
+-- l'annonce groupée (`submysterygift`) n'y est pas et ne porte donc pas
+-- `MessageFlag::Subscription`. On ne peut pas s'appuyer sur les drapeaux pour
+-- distinguer les deux, d'où la reconnaissance par le texte.
+
+--- Reconnaît l'annonce d'un don groupé.
+---@param text string?
+---@return string? gifter
+---@return integer? count
+function M.parse_mass_gift(text)
+    if type(text) ~= "string" then
+        return nil
+    end
+    local gifter, count = text:match("(%S+) is gifting (%d+) ")
+    if gifter then
+        return gifter, tonumber(count)
+    end
+    return nil
+end
+
+--- Reconnaît un don individuel et son destinataire.
+--- Deux formes : celle du serveur, et celle que `makeSubgiftMessage` compose
+--- quand le don porte plusieurs mois.
+---@param text string?
+---@return string? gifter
+---@return string? recipient
+function M.parse_single_gift(text)
+    if type(text) ~= "string" then
+        return nil
+    end
+
+    local gifter, recipient = text:match("(%S+) gifted %d+ months of a .- sub to ([%w_]+)")
+    if gifter then
+        return gifter, recipient
+    end
+
+    gifter, recipient = text:match("(%S+) gifted a .- sub to ([%w_]+)")
+    if gifter then
+        return gifter, recipient
+    end
+
+    return nil
+end
+
+-- Une fenêtre par donateur et par canal.
+local gift_windows = {}
+
+--- Compose la ligne d'annonce enrichie de la liste des destinataires.
+---@param base table message d'annonce d'origine
+---@param recipients table
+---@return table message
+local function build_aggregate(base, recipients)
+    local shown = recipients
+    local extra = 0
+    if #recipients > CONFIG.gifts.maxRecipients then
+        shown = {}
+        for i = 1, CONFIG.gifts.maxRecipients do
+            shown[i] = recipients[i]
+        end
+        extra = #recipients - CONFIG.gifts.maxRecipients
+    end
+
+    local list = table.concat(shown, ", ")
+    if extra > 0 then
+        list = list .. (" (+%d)"):format(extra)
+    end
+
+    -- Reconstruire depuis les éléments D'ORIGINE à chaque fois : repartir de la
+    -- version précédente empilerait les listes les unes sur les autres.
+    local elements = to_list(base:elements())
+    elements[#elements + 1] = {
+        type = "text",
+        text = "→ " .. list,
+        flags = FLAGS.text,
+        color = "system",
+        style = quote_style(),
+    }
+
+    local init = carry_over(base)
+    init.elements = elements
+    init.message_text = (base.message_text or "") .. " " .. list
+    init.search_text = init.message_text
+    return c2.Message.new(init)
+end
+M.build_aggregate = build_aggregate
+
+--- Marque un message comme redondant, sans toucher à son apparence.
+--- Le marqueur va dans le texte, que seul le filtre lit.
+---@param msg table
+---@return table message
+local function build_hidden(msg)
+    local init = carry_over(msg)
+    init.elements = to_list(msg:elements())
+    init.message_text = CONFIG.gifts.marker .. " " .. (msg.message_text or "")
+    init.search_text = init.message_text
+    return c2.Message.new(init)
+end
+M.build_hidden = build_hidden
+
+--- Traite un message du point de vue des dons groupés.
+---@param channel table
+---@param channel_name string
+---@param msg table
+---@return boolean handled
+local function handle_gift(channel, channel_name, msg)
+    if not CONFIG.gifts.enabled then
+        return false
+    end
+
+    -- Sans ancre de début de chaîne, un utilisateur pourrait écrire une phrase
+    -- imitant une notice. Les vraies portent `System` : on l'exige.
+    local system = (c2.MessageFlag or {}).System
+    if not has_flag(msg.flags, system) then
+        return false
+    end
+
+    local windows = gift_windows[channel_name]
+    if not windows then
+        windows = {}
+        gift_windows[channel_name] = windows
+    end
+
+    local now = msg.parse_time or 0
+
+    local gifter, count = M.parse_mass_gift(msg.message_text)
+    if gifter then
+        windows[gifter:lower()] = {
+            base = msg,
+            current = msg,
+            recipients = {},
+            opened_at = now,
+            expected = count,
+        }
+        return false  -- l'annonce elle-même reste affichée
+    end
+
+    local single_gifter, recipient = M.parse_single_gift(msg.message_text)
+    if not single_gifter or not recipient then
+        return false
+    end
+
+    local win = windows[single_gifter:lower()]
+    if not win then
+        return false
+    end
+    if now - win.opened_at > CONFIG.gifts.windowMs then
+        windows[single_gifter:lower()] = nil
+        return false
+    end
+
+    win.recipients[#win.recipients + 1] = recipient
+
+    -- Enrichir l'annonce, puis escamoter la ligne individuelle.
+    local ok, aggregate = pcall(build_aggregate, win.base, win.recipients)
+    if ok and aggregate then
+        local replaced = pcall(function()
+            channel:replace_message(win.current, aggregate)
+        end)
+        if replaced then
+            win.current = aggregate
+        end
+    end
+
+    local hidden_ok, hidden = pcall(build_hidden, msg)
+    if hidden_ok and hidden then
+        pcall(function()
+            channel:replace_message(msg, hidden)
+        end)
+    end
+
+    return true
+end
+M.handle_gift = handle_gift
+
+--- Oublie les fenêtres d'un canal fermé.
+local function gifts_forget(channel_name)
+    gift_windows[channel_name] = nil
+end
 
 -- =============================================================================
 -- Branchement sur les canaux
@@ -823,6 +1048,17 @@ local function on_message(channel, msg)
 
     c2.later(function()
         if reentrant then
+            return
+        end
+
+        reentrant = true
+        local gift_handled = select(2, pcall(function()
+            return handle_gift(channel, select(2, pcall(function()
+                return channel:get_name()
+            end)), msg)
+        end))
+        reentrant = false
+        if gift_handled == true then
             return
         end
 
@@ -1006,6 +1242,7 @@ local function sweep_channels()
             hooked[name] = nil
             hooked_channels[name] = nil
             index_forget(name)
+            gifts_forget(name)
         end
     end
 

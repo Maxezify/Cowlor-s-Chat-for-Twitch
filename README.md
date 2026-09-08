@@ -33,12 +33,12 @@ Le nightly est explicitement marqué expérimental par SevenTV. C'est un vrai co
 
 ## État
 
-**v0.10.0 — citations complètes, teintées, et recherche du parent en temps constant.** Le reste est en chantier, voir la feuille de
+**v0.11.0 — citations complètes et teintées, dons groupés regroupés.** Le reste est en chantier, voir la feuille de
 route plus bas.
 
 | | |
 |---|---|
-| Logique | testée — 63 vérifications contre une API `c2` simulée |
+| Logique | testée — 73 vérifications contre une API `c2` simulée |
 | Rendu réel | vérifié en usage : les citations s'affichent en entier |
 
 Les points à contrôler au premier lancement restent listés dans
@@ -71,6 +71,46 @@ Le plugin le répare :
   s'arrête et les deux se confondent. Un `LinebreakElement` portant
   `RepliedMessage` rétablit la séparation — et disparaît de lui-même si la
   citation est masquée, au lieu de laisser une ligne vide (`reply.lineBreak`).
+
+## Les dons groupés — une étape manuelle nécessaire
+
+Twitch annonce un don groupé par « X is gifting 5 Tier 1 Subs to CHAINE's
+community! », puis envoie les cinq lignes « X gifted a Tier 1 sub to Y! ». Le
+plugin les rattache à leur annonce et y ajoute la liste des destinataires.
+
+**Reste à créer le filtre**, une fois, dans `Settings → Filters` :
+
+```
+!(message.content contains "CCT_GIFT_HIDDEN")
+```
+
+puis à l'activer sur le split (clic droit sur l'onglet → Filters).
+
+Pourquoi cette étape : **Lua ne sait pas supprimer un message.** Le plugin peut
+seulement marquer les lignes devenues redondantes ; c'est le filtre qui les
+écarte. Le marqueur est posé sur `message_text`, que le langage de filtre lit
+sous le nom `message.content` — vérifié dans `IdentifierExpression.cpp`, qui le
+fait pointer sur `Message::messageText`.
+
+Il reste **invisible à l'écran** : l'affichage vient des éléments, pas de ce
+champ. Sans filtre configuré, les lignes s'affichent donc exactement comme
+avant — le plugin ne dégrade jamais l'existant, il attend juste que le filtre
+existe.
+
+Deux détails de reconnaissance :
+
+- Ces textes viennent du serveur Twitch (`system-msg`), **pas de la traduction
+  de Chatterino** : ils sont en anglais quelle que soit la langue de
+  l'interface. Les reconnaître par leur forme est donc stable, contrairement au
+  « Replying to ».
+- Les motifs ne sont **pas ancrés en début de chaîne**, sinon « An anonymous
+  user is gifting… » serait raté. Sans ancre, « user » sert de clé des deux
+  côtés et l'appariement tient. En contrepartie, un message d'utilisateur
+  pourrait imiter la forme : on exige donc `MessageFlag::System`, que seules
+  les vraies notices portent.
+
+L'annonce est reconstruite **depuis ses éléments d'origine** à chaque nouveau
+don : repartir de la version précédente empilerait les listes.
 
 ## Le fond teinté, et le piège de format
 
@@ -239,7 +279,6 @@ attachées, ou un accès au canal regardé — une contribution amont utile à t
 
 | | |
 |---|---|
-| Regroupement des gifts multiples | prévu — demande aussi un filtre de canal, Lua ne sait pas masquer un message |
 | Notices sub/prime/raid compactées | prévu |
 | Traduction des notices | prévu |
 | Extension d'extinction du chat Twitch | **à mesurer d'abord** — voir plus bas |

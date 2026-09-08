@@ -640,6 +640,131 @@ test("un message ordinaire n'est pas reconstruit", function()
 end)
 
 -- ---------------------------------------------------------------------------
+print("\ndons groupés")
+-- ---------------------------------------------------------------------------
+-- Les textes viennent du serveur Twitch (`system-msg`), donc en anglais quelle
+-- que soit la langue de Chatterino : les reconnaître par leur forme est stable.
+
+local MASS = "Cowlor is gifting 5 Tier 1 Subs to etoiles's community! "
+    .. "They've gifted a total of 100 in the channel!"
+
+--- Une notice système, comme Chatterino en construit pour les dons.
+local function notice(text)
+    return mock.message({
+        message_text = text,
+        parse_time = 1000,
+        flags = mock.c2.MessageFlag.System,
+        elements = {
+            mock.element({ type = "text", text = text, flags = EF.Text }),
+        },
+    })
+end
+
+test("reconnaît l'annonce d'un don groupé", function()
+    local gifter, count = plugin.parse_mass_gift(MASS)
+    equal(gifter, "Cowlor")
+    equal(count, 5)
+end)
+
+test("reconnaît un don individuel", function()
+    local gifter, recipient =
+        plugin.parse_single_gift("Cowlor gifted a Tier 1 sub to Alice!")
+    equal(gifter, "Cowlor")
+    equal(recipient, "Alice")
+end)
+
+test("reconnaît un don de plusieurs mois", function()
+    local gifter, recipient =
+        plugin.parse_single_gift("Cowlor gifted 3 months of a Tier 1 sub to Bob!")
+    equal(gifter, "Cowlor")
+    equal(recipient, "Bob")
+end)
+
+test("apparie les dons anonymes", function()
+    -- « An anonymous user … » : une ancre de début de chaîne raterait le cas.
+    -- Sans ancre, « user » sert de clé des deux côtés, donc l'appariement tient.
+    local mass = plugin.parse_mass_gift(
+        "An anonymous user is gifting 5 Tier 1 Subs to etoiles's community!")
+    local single = plugin.parse_single_gift(
+        "An anonymous user gifted a Tier 1 sub to Alice!")
+    check(mass, "l'annonce anonyme doit être reconnue")
+    equal(mass, single, "les deux doivent donner la même clé")
+end)
+
+test("ignore un message ordinaire", function()
+    check(plugin.parse_mass_gift("salut tout le monde") == nil)
+    check(plugin.parse_single_gift("salut tout le monde") == nil)
+end)
+
+test("regroupe les dons et escamote les lignes individuelles", function()
+    local channel = mock.channel("#dons")
+    local announce = mock.push(channel, notice(MASS))
+    plugin.handle_gift(channel, "#dons", announce)
+
+    for _, name in ipairs({ "Alice", "Bob", "Carol" }) do
+        local line = mock.push(channel,
+            notice("Cowlor gifted a Tier 1 sub to " .. name .. "!"))
+        check(plugin.handle_gift(channel, "#dons", line),
+            "le don de " .. name .. " devait être rattaché")
+        check(line ~= channel._messages[#channel._messages],
+            "la ligne individuelle devait être remplacée")
+        check(channel._messages[#channel._messages].message_text
+                  :find(plugin.CONFIG.gifts.marker, 1, true),
+            "la ligne remplacée doit porter le marqueur")
+    end
+
+    equal(channel._messages[1].message_text,
+        MASS .. " Alice, Bob, Carol", "l'annonce doit lister les destinataires")
+end)
+
+test("le marqueur ne change pas ce qui est affiché", function()
+    local line = notice("Cowlor gifted a Tier 1 sub to Alice!")
+    local hidden = plugin.build_hidden(line)
+
+    local before, after = {}, {}
+    for _, el in ipairs(plugin.to_list(line:elements())) do
+        before[#before + 1] = table.concat(plugin.to_list(el.words), " ")
+    end
+    for _, el in ipairs(plugin.to_list(hidden:elements())) do
+        after[#after + 1] = table.concat(plugin.to_list(el.words), " ")
+    end
+    equal(table.concat(after, "|"), table.concat(before, "|"),
+        "sans filtre configuré, la ligne doit s'afficher comme avant")
+    check(hidden.message_text:find(plugin.CONFIG.gifts.marker, 1, true),
+        "seul le texte, que le filtre lit, doit porter le marqueur")
+end)
+
+test("un don d'un autre donateur n'est pas rattaché", function()
+    local channel = mock.channel("#autre")
+    plugin.handle_gift(channel, "#autre", mock.push(channel, notice(MASS)))
+    local line = mock.push(channel, notice("Someone gifted a Tier 1 sub to Alice!"))
+    check(not plugin.handle_gift(channel, "#autre", line))
+end)
+
+test("la fenêtre se referme après le délai", function()
+    local channel = mock.channel("#delai")
+    plugin.handle_gift(channel, "#delai", mock.push(channel, notice(MASS)))
+
+    local late = notice("Cowlor gifted a Tier 1 sub to Alice!")
+    late.parse_time = 1000 + plugin.CONFIG.gifts.windowMs + 1
+    mock.push(channel, late)
+    check(not plugin.handle_gift(channel, "#delai", late),
+        "un don hors délai ne doit pas être rattaché")
+end)
+
+test("un message d'utilisateur imitant une notice est ignoré", function()
+    local channel = mock.channel("#imite")
+    local fake = mock.message({
+        message_text = "Cowlor is gifting 5 Tier 1 Subs to lol",
+        parse_time = 1000,
+        flags = 0,  -- pas System : c'est quelqu'un qui écrit
+        elements = { mock.element({ type = "text", text = "…", flags = EF.Text }) },
+    })
+    mock.push(channel, fake)
+    check(not plugin.handle_gift(channel, "#imite", fake))
+end)
+
+-- ---------------------------------------------------------------------------
 print("\ncommande de diagnostic")
 -- ---------------------------------------------------------------------------
 -- Le balayage automatique ne voit pas la fenêtre superposée au navigateur :
