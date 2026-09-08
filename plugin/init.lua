@@ -48,6 +48,19 @@ local CONFIG = {
         -- dessous. Équivalent approché de `reply.fontScale` (0.825).
         fontStyle = "ChatMediumSmall",
 
+        -- Faire partir le message d'une ligne neuve, sous la citation.
+        --
+        -- Tant que Chatterino tronquait la citation à une ligne, le message
+        -- commençait forcément en dessous. Une citation qui passe à la ligne
+        -- n'a plus cette garantie : le message reprend là où elle s'arrête, et
+        -- les deux se confondent.
+        --
+        -- `LinebreakElement` appelle `container.breakLine()`, mais seulement si
+        -- ses drapeaux correspondent au contexte de mise en page. On lui donne
+        -- `RepliedMessage` : le saut disparaît de lui-même si la citation est
+        -- masquée (« Hide reply context »), au lieu de laisser une ligne vide.
+        lineBreak = true,
+
         -- Nombre de messages récents à fouiller pour retrouver le parent.
         -- Trop bas : on rate des parents et on perd les emotes. Trop haut : on
         -- paie une recherche linéaire sur chaque réponse.
@@ -92,7 +105,7 @@ local CONFIG = {
 
 local M = {}
 
-local VERSION = "0.7.0"
+local VERSION = "0.8.0"
 M.VERSION = VERSION
 
 local function log(level, ...)
@@ -570,6 +583,15 @@ local function rebuild_reply(channel, msg)
             },
         }
         debug("parent introuvable, citation réémise en texte :", ctx.name)
+    end
+
+    -- Le saut de ligne fait partie de la citation : il doit être posé après
+    -- elle, avant le corps du message.
+    if CONFIG.reply.lineBreak then
+        quote[#quote + 1] = {
+            type = "linebreak",
+            flags = FLAGS.replied,
+        }
     end
 
     local init = carry_over(msg)

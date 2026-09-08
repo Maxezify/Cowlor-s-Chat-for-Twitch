@@ -33,17 +33,16 @@ Le nightly est explicitement marqué expérimental par SevenTV. C'est un vrai co
 
 ## État
 
-**v0.7.0 — la cause racine est corrigée.** Le reste est en chantier, voir la feuille de
+**v0.8.0 — citations complètes, emotes comprises, sur leur propre ligne.** Le reste est en chantier, voir la feuille de
 route plus bas.
 
 | | |
 |---|---|
-| Logique | testée — 52 vérifications contre une API `c2` simulée |
-| Rendu réel | **jamais exécuté dans Chatterino** |
+| Logique | testée — 54 vérifications contre une API `c2` simulée |
+| Rendu réel | vérifié en usage : les citations s'affichent en entier |
 
-Ce plugin n'a pas encore tourné une seule fois dans un vrai Chatterino. La
-logique est vérifiée, le comportement à l'écran ne l'est pas. Les points à
-contrôler au premier lancement sont listés dans [`docs/INSTALL.md`](docs/INSTALL.md).
+Les points à contrôler au premier lancement restent listés dans
+[`docs/INSTALL.md`](docs/INSTALL.md).
 
 ## Ce que fait le plugin
 
@@ -62,6 +61,12 @@ Le plugin le répare :
   emote, mais `Message:append_element()` clone celle qu'on lui passe.
 - **Repli propre.** Parent sorti de l'historique : on réémet le texte complet
   sans emotes. La troncature disparaît quand même.
+- **Message sur sa propre ligne.** Tant que la citation tenait sur une ligne, le
+  message commençait forcément en dessous. Une citation qui passe à la ligne
+  perd cette garantie : sans saut explicite, le message reprend là où elle
+  s'arrête et les deux se confondent. Un `LinebreakElement` portant
+  `RepliedMessage` rétablit la séparation — et disparaît de lui-même si la
+  citation est masquée, au lieu de laisser une ligne vide (`reply.lineBreak`).
 
 ## La cause racine : l'API ne rend pas des tables Lua
 

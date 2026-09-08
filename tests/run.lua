@@ -420,8 +420,45 @@ test("la citation reprend les emotes du parent", function()
     -- La citation d'origine (un single-line-text) a disparu au profit d'un
     -- texte et d'une emote.
     equal(table.concat(types, ","),
-        "reply-curve,text,text,text,emote,timestamp,mention,text",
+        "reply-curve,text,text,text,emote,linebreak,timestamp,mention,text",
         "structure du message reconstruit")
+end)
+
+test("un saut de ligne sépare la citation du message", function()
+    -- Tant que la citation tenait sur une ligne, le message commençait
+    -- forcément en dessous. Une citation qui passe à la ligne perd cette
+    -- garantie : sans saut explicite, le message reprend là où elle s'arrête.
+    local channel, _, reply = scenario({
+        mock.element({ type = "text", words = { "salut" }, flags = EF.Text }),
+    }, "salut", { "salut" })
+
+    local rebuilt = plugin.rebuild_reply(channel, reply)
+    local seen_break, break_flags = false, nil
+    for _, el in ipairs(plugin.to_list(rebuilt:elements())) do
+        if el.type == "linebreak" then
+            seen_break, break_flags = true, el.flags
+        end
+    end
+    check(seen_break, "aucun saut de ligne dans le message reconstruit")
+    check(plugin.has_flag(break_flags, EF.RepliedMessage),
+        "le saut doit porter RepliedMessage, sinon il subsiste quand la "
+        .. "citation est masquée — et laisse une ligne vide")
+end)
+
+test("le saut de ligne peut être désactivé", function()
+    local previous = plugin.CONFIG.reply.lineBreak
+    plugin.CONFIG.reply.lineBreak = false
+
+    local channel, _, reply = scenario({
+        mock.element({ type = "text", words = { "salut" }, flags = EF.Text }),
+    }, "salut", { "salut" })
+    local rebuilt = plugin.rebuild_reply(channel, reply)
+
+    plugin.CONFIG.reply.lineBreak = previous
+
+    for _, el in ipairs(plugin.to_list(rebuilt:elements())) do
+        check(el.type ~= "linebreak", "aucun saut ne devait être posé")
+    end
 end)
 
 test("aucun single-line-text ne subsiste : la troncature est levée", function()
