@@ -14,6 +14,32 @@ local function bit(n)
     return 1 << n
 end
 
+--- Conteneur imitant ce que rendent vraiment les liaisons de Chatterino.
+---
+--- `Message:elements()`, `message_snapshot()` et `element.words` ne renvoient PAS
+--- des tables Lua mais des objets C++ (`MessageElements`, `std::vector`,
+--- `QStringList`). On les parcourt avec `ipairs`, mais on ne peut pas y écrire,
+--- et `type()` répond « userdata ».
+---
+--- Ce proxy reproduit tout cela sauf le `type()`, impossible à simuler en Lua
+--- pur — d'où le test de source qui interdit les gardes `type(v) == "table"`.
+--- Rendre de vraies tables ici est ce qui a laissé 47 tests passer au vert
+--- pendant que le plugin n'examinait rien.
+---@param list table
+function mock.container(list)
+    return setmetatable({}, {
+        __index = function(_, k)
+            return list[k]
+        end,
+        __len = function()
+            return #list
+        end,
+        __newindex = function()
+            error("un conteneur renvoyé par l'API n'est pas modifiable")
+        end,
+    })
+end
+
 local c2 = {}
 
 -- Uniquement les drapeaux à BIT SIMPLE : les liaisons de Chatterino
@@ -103,13 +129,21 @@ function mock.element(spec)
     -- Une table d'initialisation porte `text` (une chaîne) ; un élément vivant
     -- porte `words` (une liste). Chatterino fait cette conversion au moment de
     -- construire l'élément, on la reproduit.
+    local words = nil
     if spec.words then
-        el.words = spec.words
-    elseif spec.text then
-        el.words = {}
-        for w in tostring(spec.text):gmatch("%S+") do
-            el.words[#el.words + 1] = w
+        words = {}
+        for _, w in ipairs(spec.words) do
+            words[#words + 1] = w
         end
+    elseif spec.text then
+        words = {}
+        for w in tostring(spec.text):gmatch("%S+") do
+            words[#words + 1] = w
+        end
+    end
+    if words then
+        el._words = words
+        el.words = mock.container(words)
     end
     el.__cloned_from = spec.__cloned_from
     return el
@@ -126,7 +160,7 @@ function Element:clone()
         color = self.color,
         style = self.style,
         tooltip = self.tooltip,
-        words = self.words and { table.unpack(self.words) } or nil,
+        words = self._words and { table.unpack(self._words) } or nil,
     })
     copy.__cloned_from = self
     return copy
@@ -140,7 +174,8 @@ local Message = {}
 Message.__index = Message
 
 function Message:elements()
-    return self._elements
+    -- Conteneur, pas table : c'est ce que rend la vraie API.
+    return mock.container(self._elements)
 end
 
 function Message:append_element(elem)
@@ -208,7 +243,7 @@ function Channel:message_snapshot(n)
     for i = from, #self._messages do
         out[#out + 1] = self._messages[i]
     end
-    return out
+    return mock.container(out)
 end
 
 function Channel:replace_message(old, replacement)

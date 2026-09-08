@@ -33,12 +33,12 @@ Le nightly est explicitement marqué expérimental par SevenTV. C'est un vrai co
 
 ## État
 
-**v0.6.0 — instrumenté : `/cowlors` montre les compteurs et le DOM réel.** Le reste est en chantier, voir la feuille de
+**v0.7.0 — la cause racine est corrigée.** Le reste est en chantier, voir la feuille de
 route plus bas.
 
 | | |
 |---|---|
-| Logique | testée — 47 vérifications contre une API `c2` simulée |
+| Logique | testée — 52 vérifications contre une API `c2` simulée |
 | Rendu réel | **jamais exécuté dans Chatterino** |
 
 Ce plugin n'a pas encore tourné une seule fois dans un vrai Chatterino. La
@@ -62,6 +62,45 @@ Le plugin le répare :
   emote, mais `Message:append_element()` clone celle qu'on lui passe.
 - **Repli propre.** Parent sorti de l'historique : on réémet le texte complet
   sans emotes. La troncature disparaît quand même.
+
+## La cause racine : l'API ne rend pas des tables Lua
+
+Sept versions, et le vrai coupable était une ligne écrite « par prudence » dans
+la toute première.
+
+`Message:elements()` rend un `MessageElements`, `message_snapshot()` un
+`std::vector<MessagePtr>`, `element.words` une `QStringList`, `Message.new()` un
+`Message`. **Ce sont des objets C++**, pas des tables : pour Lua, du `userdata`.
+
+On les parcourt très bien avec `ipairs` — Lua 5.4 passe par `__index` — ce qui
+donne l'illusion de tables. Mais `type()` répond `"userdata"`, et ni `#`, ni
+`table.concat`, ni l'écriture n'y fonctionnent.
+
+D'où ceci, en tête de la fonction de détection :
+
+```lua
+if type(elements) ~= "table" then
+    return nil        -- rejette TOUT ce que l'API fournit
+end
+```
+
+Écrit pour être robuste, ce garde rendait le plugin inopérant : il n'examinait
+jamais un seul message, sans lever la moindre erreur ni écrire une ligne de
+journal. Le même garde était présent dans `match_parent`, `extract_body`, et sur
+le message reconstruit.
+
+Le diagnostic n'a été possible que quand `/cowlors` a affiché, côte à côte,
+« réponses repérées : 0 » et une liste d'éléments contenant bel et bien un
+`single-line-text`. La contradiction désignait le garde.
+
+Tout ce qui vient de `c2` passe désormais par `to_list()`, qui copie le
+conteneur dans une vraie table. **Un test de source interdit mécaniquement à un
+garde `type(v) == "table"` de revenir** — il en a d'ailleurs débusqué une seconde
+occurrence à l'écriture même de ce test.
+
+Et l'API simulée des tests rend maintenant des conteneurs, pas des tables : leur
+rendre de vraies tables est ce qui a laissé 47 tests au vert pendant que le
+plugin ne faisait rien.
 
 ## Le piège : ne jamais remplacer pendant le signal
 

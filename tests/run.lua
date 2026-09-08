@@ -171,6 +171,64 @@ test("les masques du plugin se résolvent sans drapeau combiné", function()
 end)
 
 -- ---------------------------------------------------------------------------
+print("\nconteneurs de l'API")
+-- ---------------------------------------------------------------------------
+-- `Message:elements()`, `message_snapshot()` et `element.words` rendent des
+-- objets C++, pas des tables. On les parcourt avec ipairs, mais `type()` répond
+-- « userdata » et l'écriture y est interdite. Un garde `type(v) ~= "table"`,
+-- écrit par prudence, a rendu ce plugin inopérant de la v0.1.0 à la v0.6.0 : il
+-- rejetait tout ce que l'API fournit, sans lever la moindre erreur.
+
+test("to_list rend une vraie table modifiable", function()
+    local list = plugin.to_list(mock.container({ "a", "b" }))
+    equal(type(list), "table")
+    equal(table.concat(list, " "), "a b")
+    list[3] = "c"
+    equal(#list, 3, "la copie doit être modifiable, à la différence du conteneur")
+end)
+
+test("to_list tolère une valeur qui n'est pas un conteneur", function()
+    equal(#plugin.to_list(nil), 0)
+    equal(#plugin.to_list(42), 0)
+    equal(#plugin.to_list("texte"), 0)
+end)
+
+test("un conteneur refuse l'écriture, comme en vrai", function()
+    local container = mock.container({ "a" })
+    check(not pcall(function()
+        container[2] = "b"
+    end), "écrire dans un conteneur de l'API doit échouer")
+end)
+
+test("la détection fonctionne sur un conteneur, pas seulement sur une table", function()
+    local msg = reply_message({
+        display_name = "Bob",
+        parent_name = "Alice",
+        quote_words = { "salut", "tout", "le", "monde" },
+    })
+    -- msg:elements() rend un conteneur : c'est le cas réel, et celui qui
+    -- échouait silencieusement.
+    local ctx = plugin.find_reply_context(msg:elements())
+    check(ctx, "aucune citation repérée sur un conteneur")
+    equal(table.concat(ctx.words, " "), "salut tout le monde")
+end)
+
+test("aucun garde de type sur un conteneur dans le code du plugin", function()
+    -- Verrou mécanique : le seul emploi légitime de « table » dans un test de
+    -- type est celui de to_list, qui accepte explicitement les deux formes.
+    local source = assert(io.open("plugin/init.lua")):read("a")
+    local line_no = 0
+    for line in source:gmatch("[^\n]*") do
+        line_no = line_no + 1
+        if line:find('"table"', 1, true) and not line:match("^%s*%-%-") then
+            check(line:find('kind ~= "table" and kind ~= "userdata"', 1, true),
+                ("ligne %d : garde de type interdit sur un conteneur —%s")
+                    :format(line_no, line))
+        end
+    end
+end)
+
+-- ---------------------------------------------------------------------------
 print("\nrepérage de la citation")
 -- ---------------------------------------------------------------------------
 

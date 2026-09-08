@@ -92,7 +92,7 @@ local CONFIG = {
 
 local M = {}
 
-local VERSION = "0.6.0"
+local VERSION = "0.7.0"
 M.VERSION = VERSION
 
 local function log(level, ...)
@@ -121,6 +121,46 @@ local function has_flag(value, flag)
     return (value & flag) ~= 0
 end
 M.has_flag = has_flag
+
+--- Copie un conteneur renvoyé par l'API dans une vraie table Lua.
+---
+--- CECI EST LA LEÇON CENTRALE DE CE PLUGIN.
+---
+--- Les liaisons de Chatterino ne renvoient pas des tables Lua mais des objets
+--- C++ : `Message:elements()` rend un `MessageElements`, `message_snapshot()` un
+--- `std::vector<MessagePtr>`, `element.words` une `QStringList`. Pour Lua, ce
+--- sont des `userdata`.
+---
+--- On peut les parcourir avec `ipairs` — Lua 5.4 s'appuie sur `__index` — ce qui
+--- donne l'illusion que ce sont des tables. Mais `type()` répond « userdata », et
+--- ni `#`, ni `table.concat`, ni l'écriture n'y fonctionnent.
+---
+--- Un garde écrit par prudence, `if type(v) ~= "table" then return nil end`,
+--- rejette donc TOUT ce que l'API fournit réellement. C'est ce qui a rendu ce
+--- plugin inopérant de la v0.1.0 à la v0.6.0 : il n'examinait jamais rien, sans
+--- lever la moindre erreur.
+---
+--- Ne jamais tester `type(v) == "table"` sur une valeur venue de `c2`.
+--- Tout convertir à l'entrée, et travailler ensuite sur de vraies tables.
+---@param value any
+---@return table
+local function to_list(value)
+    local out = {}
+    local kind = type(value)
+    if kind ~= "table" and kind ~= "userdata" then
+        return out
+    end
+    local ok = pcall(function()
+        for _, item in ipairs(value) do
+            out[#out + 1] = item
+        end
+    end)
+    if not ok then
+        return {}
+    end
+    return out
+end
+M.to_list = to_list
 
 --- Normalise un texte pour comparaison : espaces réduits, extrémités coupées.
 ---@param s string?
@@ -239,15 +279,13 @@ end
 ---@param elements table liste d'éléments (ordre du message)
 ---@return table? info { body_index, name_index, name, words }
 function M.find_reply_context(elements)
-    if type(elements) ~= "table" then
-        return nil
-    end
+    elements = to_list(elements)
 
     for i, el in ipairs(elements) do
         if el.type == "single-line-text" then
             local info = {
                 body_index = i,
-                words = el.words or {},
+                words = to_list(el.words),
             }
 
             -- Le pseudo cité est l'élément textuel le plus proche AVANT le corps
@@ -255,7 +293,7 @@ function M.find_reply_context(elements)
             -- avant, mais on remonte pour tolérer un élément intercalé.
             for j = i - 1, 1, -1 do
                 local prev = elements[j]
-                local w = prev.words and prev.words[1]
+                local w = to_list(prev.words)[1]
                 if type(w) == "string" and w:sub(1, 1) == "@" then
                     info.name_index = j
                     info.name = strip_mention(w)
@@ -289,9 +327,8 @@ end
 ---@param words table mots de la citation
 ---@return table? parent
 function M.match_parent(snapshot, name, words)
-    if type(snapshot) ~= "table" or type(words) ~= "table" then
-        return nil
-    end
+    snapshot = to_list(snapshot)
+    words = to_list(words)
 
     local wanted = normalize(table.concat(words, " "))
     if wanted == "" then
@@ -333,11 +370,8 @@ end
 ---@return table parts liste de { kind = "text"|"element", ... }
 function M.extract_body(parent_elements)
     local parts = {}
-    if type(parent_elements) ~= "table" then
-        return parts
-    end
 
-    for _, el in ipairs(parent_elements) do
+    for _, el in ipairs(to_list(parent_elements)) do
         local flags = el.flags
         local is_body = has_flag(flags, FLAGS.body)
         local is_chrome = has_flag(flags, FLAGS.notBody)
@@ -352,7 +386,7 @@ function M.extract_body(parent_elements)
                 -- Un lien cité perd donc son caractère cliquable. C'est assumé :
                 -- le cloner le rendrait cliquable mais à la mauvaise taille, et
                 -- une citation est là pour situer, pas pour être suivie.
-                parts[#parts + 1] = { kind = "text", words = el.words or {} }
+                parts[#parts + 1] = { kind = "text", words = to_list(el.words) }
             else
                 -- Emotes, emoji : aucune table d'initialisation n'existe côté
                 -- Lua, on ne peut que les recopier. Leur taille n'est donc pas
@@ -440,7 +474,7 @@ end
 function M.splice_elements(original, ctx, quote)
     local out = {}
 
-    for i, el in ipairs(original) do
+    for i, el in ipairs(to_list(original)) do
         if i == ctx.body_index then
             for _, q in ipairs(quote) do
                 out[#out + 1] = q
@@ -495,7 +529,7 @@ end
 ---@param msg table
 ---@return table? replacement
 local function rebuild_reply(channel, msg)
-    local elements = msg:elements()
+    local elements = to_list(msg:elements())
     local ctx = M.find_reply_context(elements)
     if not ctx then
         return nil
@@ -506,7 +540,7 @@ local function rebuild_reply(channel, msg)
     local parent = nil
     if CONFIG.reply.renderEmotes and ctx.name then
         local ok, snapshot = pcall(function()
-            return channel:message_snapshot(CONFIG.reply.lookbackMessages)
+            return to_list(channel:message_snapshot(CONFIG.reply.lookbackMessages))
         end)
         if ok and snapshot then
             parent = M.match_parent(snapshot, ctx.name, ctx.words)
@@ -546,7 +580,7 @@ local function rebuild_reply(channel, msg)
     -- Les éléments clonés (emotes) n'ont pas encore le drapeau qui les range dans
     -- la citation. On le pose après coup : `add_flags` fonctionne sur n'importe
     -- quel élément, y compris ceux qu'on vient de faire cloner.
-    local built = replacement:elements()
+    local built = to_list(replacement:elements())
     local from, to = ctx.body_index, ctx.body_index + #quote - 1
     for i = from, to do
         local el = built[i]
@@ -655,11 +689,13 @@ local function rebuild_existing(channel)
     local fixed = 0
 
     pcall(function()
-        local snapshot = channel:message_snapshot(CONFIG.reply.lookbackMessages)
+        local snapshot = to_list(channel:message_snapshot(CONFIG.reply.lookbackMessages))
         for i = 1, #snapshot do
             local msg = snapshot[i]
-            local built = select(2, pcall(rebuild_reply, channel, msg))
-            if type(built) == "table" then
+            -- `rebuild_reply` rend un `c2.Message`, qui est lui aussi un objet
+            -- C++ : le tester avec `type(...) == "table"` le rejetait toujours.
+            local ok, built = pcall(rebuild_reply, channel, msg)
+            if ok and built then
                 reentrant = true
                 local done = pcall(function()
                     channel:replace_message(msg, built)
@@ -856,7 +892,7 @@ local function command(ctx)
     -- « … » persiste, le défaut est dans le branchement ou le remplacement.
     local scanned, found, example = 0, 0, nil
     pcall(function()
-        local snapshot = channel:message_snapshot(CONFIG.reply.lookbackMessages)
+        local snapshot = to_list(channel:message_snapshot(CONFIG.reply.lookbackMessages))
         scanned = #snapshot
         for i = #snapshot, 1, -1 do
             local info = M.find_reply_context(snapshot[i]:elements())
@@ -898,11 +934,11 @@ local function command(ctx)
     -- la présence d'un « single-line-text » ; s'il n'y figure pas, elle est bâtie
     -- sur une hypothèse fausse, et c'est ici qu'on le voit.
     pcall(function()
-        local snapshot = channel:message_snapshot(CONFIG.reply.lookbackMessages)
+        local snapshot = to_list(channel:message_snapshot(CONFIG.reply.lookbackMessages))
         for i = #snapshot, 1, -1 do
             local types = {}
             local looks_like_reply = false
-            for _, el in ipairs(snapshot[i]:elements()) do
+            for _, el in ipairs(to_list(snapshot[i]:elements())) do
                 local t = tostring(el.type)
                 types[#types + 1] = t
                 if t == "reply-curve" or t == "single-line-text" then
@@ -916,7 +952,7 @@ local function command(ctx)
         end
         if #snapshot > 0 then
             local types = {}
-            for _, el in ipairs(snapshot[#snapshot]:elements()) do
+            for _, el in ipairs(to_list(snapshot[#snapshot]:elements())) do
                 types[#types + 1] = tostring(el.type)
             end
             say("aucune réponse trouvée ; dernier message — éléments : "
