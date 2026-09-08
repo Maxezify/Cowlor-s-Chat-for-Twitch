@@ -420,8 +420,52 @@ test("la citation reprend les emotes du parent", function()
     -- La citation d'origine (un single-line-text) a disparu au profit d'un
     -- texte et d'une emote.
     equal(table.concat(types, ","),
-        "reply-curve,text,text,text,emote,linebreak,timestamp,mention,text",
-        "structure du message reconstruit")
+        "reply-curve,text,text,emote,linebreak,timestamp,mention,text",
+        "structure du message reconstruit (préfixe « Replying to » retiré)")
+end)
+
+test("le préfixe « Replying to » est retiré", function()
+    local channel, _, reply = scenario({
+        mock.element({ type = "text", words = { "salut" }, flags = EF.Text }),
+    }, "salut", { "salut" })
+
+    local rebuilt = plugin.rebuild_reply(channel, reply)
+    for _, el in ipairs(plugin.to_list(rebuilt:elements())) do
+        local words = plugin.to_list(el.words)
+        check(words[1] ~= "Replying", "le préfixe subsiste dans le message")
+    end
+end)
+
+test("le pseudo cité, lui, est conservé", function()
+    local channel, _, reply = scenario({
+        mock.element({ type = "text", words = { "salut" }, flags = EF.Text }),
+    }, "salut", { "salut" })
+
+    local rebuilt = plugin.rebuild_reply(channel, reply)
+    local seen = false
+    for _, el in ipairs(plugin.to_list(rebuilt:elements())) do
+        if plugin.to_list(el.words)[1] == "@Alice:" then
+            seen = true
+        end
+    end
+    check(seen, "le pseudo cité doit rester : c'est lui qui porte l'information")
+end)
+
+test("le préfixe est repéré par sa position, pas par ses mots", function()
+    -- Chatterino traduit « Replying to ». Reconnaître la phrase la rendrait
+    -- fragile dès qu'on change la langue de l'interface.
+    local msg = mock.message({
+        elements = {
+            mock.element({ type = "reply-curve", flags = EF.RepliedMessage }),
+            mock.element({ type = "text", words = { "Antwort", "auf" }, flags = EF.RepliedMessage }),
+            mock.element({ type = "text", words = { "@Alice:" }, flags = EF.RepliedMessage }),
+            mock.element({ type = "single-line-text", words = { "hallo" },
+                           flags = EF.RepliedMessage | EF.Text }),
+        },
+    })
+    local ctx = plugin.find_reply_context(msg:elements())
+    check(ctx.prefix_indices[2], "le préfixe traduit doit être repéré")
+    check(not ctx.prefix_indices[3], "le pseudo ne doit pas être pris pour un préfixe")
 end)
 
 test("un saut de ligne sépare la citation du message", function()
@@ -495,9 +539,15 @@ test("la citation reçoit la police et la couleur configurées", function()
     }, "salut", { "salut" })
 
     local rebuilt = plugin.rebuild_reply(channel, reply)
-    local quote = rebuilt:elements()[4]
+    local quote = nil
+    for _, el in ipairs(plugin.to_list(rebuilt:elements())) do
+        if el.color == plugin.CONFIG.reply.color then
+            quote = el
+            break
+        end
+    end
+    check(quote, "aucun élément à la couleur de citation")
     equal(quote.style, mock.c2.FontStyle.ChatMediumSmall, "police de la citation")
-    equal(quote.color, plugin.CONFIG.reply.color, "couleur de la citation")
 end)
 
 test("parent introuvable : le texte complet est tout de même réémis", function()
@@ -511,9 +561,17 @@ test("parent introuvable : le texte complet est tout de même réémis", functio
 
     local rebuilt = plugin.rebuild_reply(channel, reply)
     check(rebuilt, "un repli doit exister")
-    local quote = rebuilt:elements()[4]
+    local quote = nil
+    for _, el in ipairs(plugin.to_list(rebuilt:elements())) do
+        if el.color == plugin.CONFIG.reply.color then
+            quote = el
+            break
+        end
+    end
+    check(quote, "aucun élément à la couleur de citation")
     equal(quote.type, "text", "la citation doit devenir un texte ordinaire")
-    equal(table.concat(quote.words, " "), "un message sorti de l'historique")
+    equal(table.concat(plugin.to_list(quote.words), " "),
+        "un message sorti de l'historique")
 end)
 
 test("les champs du message d'origine sont conservés", function()

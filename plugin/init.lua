@@ -48,6 +48,17 @@ local CONFIG = {
         -- dessous. Équivalent approché de `reply.fontScale` (0.825).
         fontStyle = "ChatMediumSmall",
 
+        -- Retirer le « Replying to » qui précède le pseudo cité.
+        --
+        -- La courbe et le « @pseudo : » disent déjà que c'est une réponse ; la
+        -- mention est redondante et mange de la largeur sur une colonne étroite.
+        -- Repris de `reply.hidePrefix` dans BetterTwitchChat.
+        --
+        -- Les éléments retirés sont ceux qui séparent la courbe du pseudo, quels
+        -- que soient leurs mots : Chatterino traduit cette phrase selon la langue
+        -- de l'interface, et la reconnaître par son texte serait fragile.
+        hidePrefix = true,
+
         -- Faire partir le message d'une ligne neuve, sous la citation.
         --
         -- Tant que Chatterino tronquait la citation à une ligne, le message
@@ -105,7 +116,7 @@ local CONFIG = {
 
 local M = {}
 
-local VERSION = "0.8.0"
+local VERSION = "0.9.0"
 M.VERSION = VERSION
 
 local function log(level, ...)
@@ -314,6 +325,20 @@ function M.find_reply_context(elements)
                 end
             end
 
+            -- Le préfixe, c'est ce qui reste de textuel entre la courbe et le
+            -- pseudo. On le repère par sa POSITION, pas par ses mots : la phrase
+            -- est traduite selon la langue de Chatterino.
+            info.prefix_indices = {}
+            if info.name_index then
+                for j = info.name_index - 1, 1, -1 do
+                    local prev = elements[j]
+                    if prev.type ~= "text" then
+                        break
+                    end
+                    info.prefix_indices[j] = true
+                end
+            end
+
             return info
         end
     end
@@ -484,20 +509,23 @@ end
 ---@param ctx table résultat de find_reply_context
 ---@param quote table éléments de remplacement de la citation
 ---@return table
-function M.splice_elements(original, ctx, quote)
+function M.splice_elements(original, ctx, quote, drop_prefix)
     local out = {}
+    local quote_start = nil
+    local skip = (drop_prefix and ctx.prefix_indices) or {}
 
     for i, el in ipairs(to_list(original)) do
         if i == ctx.body_index then
+            quote_start = #out + 1
             for _, q in ipairs(quote) do
                 out[#out + 1] = q
             end
-        else
+        elseif not skip[i] then
             out[#out + 1] = el
         end
     end
 
-    return out
+    return out, quote_start
 end
 
 -- =============================================================================
@@ -595,15 +623,19 @@ local function rebuild_reply(channel, msg)
     end
 
     local init = carry_over(msg)
-    init.elements = M.splice_elements(elements, ctx, quote)
+    local spliced, quote_start =
+        M.splice_elements(elements, ctx, quote, CONFIG.reply.hidePrefix)
+    init.elements = spliced
 
     local replacement = c2.Message.new(init)
 
     -- Les éléments clonés (emotes) n'ont pas encore le drapeau qui les range dans
     -- la citation. On le pose après coup : `add_flags` fonctionne sur n'importe
     -- quel élément, y compris ceux qu'on vient de faire cloner.
+    -- Se repérer sur la position DANS LE MESSAGE RECONSTRUIT : retirer le
+    -- préfixe décale tout ce qui suit.
     local built = to_list(replacement:elements())
-    local from, to = ctx.body_index, ctx.body_index + #quote - 1
+    local from, to = quote_start, quote_start + #quote - 1
     for i = from, to do
         local el = built[i]
         if el and not has_flag(el.flags, FLAGS.replied) then

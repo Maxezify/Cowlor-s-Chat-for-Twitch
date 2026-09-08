@@ -33,12 +33,12 @@ Le nightly est explicitement marqué expérimental par SevenTV. C'est un vrai co
 
 ## État
 
-**v0.8.0 — citations complètes, emotes comprises, sur leur propre ligne.** Le reste est en chantier, voir la feuille de
+**v0.9.0 — citations complètes, sans « Replying to », sur leur propre ligne.** Le reste est en chantier, voir la feuille de
 route plus bas.
 
 | | |
 |---|---|
-| Logique | testée — 54 vérifications contre une API `c2` simulée |
+| Logique | testée — 57 vérifications contre une API `c2` simulée |
 | Rendu réel | vérifié en usage : les citations s'affichent en entier |
 
 Les points à contrôler au premier lancement restent listés dans
@@ -61,6 +61,10 @@ Le plugin le répare :
   emote, mais `Message:append_element()` clone celle qu'on lui passe.
 - **Repli propre.** Parent sorti de l'historique : on réémet le texte complet
   sans emotes. La troncature disparaît quand même.
+- **« Replying to » retiré.** La courbe et le « @pseudo : » disent déjà que
+  c'est une réponse. Les éléments retirés sont ceux qui séparent la courbe du
+  pseudo, repérés par leur **position** et non par leurs mots : Chatterino
+  traduit cette phrase selon la langue de l'interface (`reply.hidePrefix`).
 - **Message sur sa propre ligne.** Tant que la citation tenait sur une ligne, le
   message commençait forcément en dessous. Une citation qui passe à la ligne
   perd cette garantie : sans saut explicite, le message reprend là où elle
@@ -241,6 +245,27 @@ Le plugin tient dans un seul `plugin/init.lua`. Chatterino vide `package.path` e
 remplace les chercheurs de modules par les siens, non documentés : un `require`
 sur nos propres fichiers serait un pari. À la taille actuelle, un fichier unique
 ne coûte rien.
+
+## Ce qui n'est pas faisable : le retrait des lignes suivantes
+
+Quand la citation passe à la ligne, la suite repart à la marge gauche, sous le
+symbole de réponse, au lieu de s'aligner sur le début du texte cité.
+
+**Ce n'est pas réglable depuis un plugin, ni contournable.** `MessageLayoutContainer`
+n'a aucune notion de retrait : `breakLine()` ramène la ligne à la marge, et le
+seul décalage horizontal qu'il connaisse sert aux messages centrés. Les deux
+seuls endroits où le conteneur mentionne `RepliedMessage` concernent la copie
+vers le presse-papier et la détection du sens d'écriture.
+
+Un plugin ne peut pas non plus compenser en insérant des espaces : le retour à
+la ligne dépend de la largeur du panneau, et Lua n'a accès à aucune métrique de
+police.
+
+C'est le premier besoin de cette liste qui exige réellement du C++ — un retrait
+suspendu dans `MessageLayoutContainer`, applicable aux éléments portant
+`RepliedMessage`. Petit patch, bien délimité, et **utile à tous les
+utilisateurs de Chatterino** : c'est un bon candidat à une contribution amont
+plutôt qu'à un fork.
 
 ## Limites connues
 
