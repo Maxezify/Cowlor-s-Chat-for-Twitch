@@ -33,12 +33,12 @@ Le nightly est explicitement marqué expérimental par SevenTV. C'est un vrai co
 
 ## État
 
-**v0.9.0 — citations complètes, sans « Replying to », sur leur propre ligne.** Le reste est en chantier, voir la feuille de
+**v0.10.0 — citations complètes, teintées, et recherche du parent en temps constant.** Le reste est en chantier, voir la feuille de
 route plus bas.
 
 | | |
 |---|---|
-| Logique | testée — 57 vérifications contre une API `c2` simulée |
+| Logique | testée — 63 vérifications contre une API `c2` simulée |
 | Rendu réel | vérifié en usage : les citations s'affichent en entier |
 
 Les points à contrôler au premier lancement restent listés dans
@@ -71,6 +71,53 @@ Le plugin le répare :
   s'arrête et les deux se confondent. Un `LinebreakElement` portant
   `RepliedMessage` rétablit la séparation — et disparaît de lui-même si la
   citation est masquée, au lieu de laisser une ligne vide (`reply.lineBreak`).
+
+## Le fond teinté, et le piège de format
+
+`reply.lineTint` peint le fond des réponses. Deux choses à savoir avant d'y
+toucher.
+
+**Le format est `#AARRGGBB`, alpha en tête.** Qt lit une chaîne de neuf
+caractères dans cet ordre, alors que le sélecteur de couleur de Chatterino
+affiche son hexadécimal en RGBA. Recopier ce qu'il montre inverse l'alpha et le
+bleu, sans rien signaler. R=124 V=124 B=124 alpha=75 s'écrit `#4b7c7c7c`, pas
+`#7c7c7c4b`.
+
+**La couleur seule ne peint rien.** `MessageLayout::paint` ne mélange le fond
+que si le message porte aussi `MessageFlag::Highlighted` :
+
+```cpp
+else if ((flags.has(MessageFlag::Highlighted) || …) && …)
+{
+    assert(this->message_->highlightColor);
+```
+
+Les deux vont donc toujours ensemble. Trois conséquences :
+
+- Un highlight **déjà posé est prioritaire** — ce sont les règles de badge de
+  l'utilisateur, les écraser détruirait son signal. La teinte ne s'applique
+  qu'aux réponses sans couleur propre.
+- La cascade de fond est un si/sinon-si : `FirstMessage` et `WatchStreak`
+  restent prioritaires sur nous, mais `Announcement` et `Subscription` passent
+  après. Une réponse qui serait aussi une notice d'abonnement prendra le gris.
+- Un message `Highlighted` laisse une marque dans la barre de défilement. Si ces
+  marques grises encombrent, mettre `lineTint = nil`.
+
+## La transition avant/après
+
+Le remplacement est différé d'un tour de boucle (voir plus bas) : la version
+d'origine est donc visible une image avant d'être remplacée. On ne peut pas
+supprimer ce délai — il faudrait que le slot du plugin passe après celui de la
+vue, ce que l'API ne permet pas de garantir — mais on peut réduire le travail
+fait pendant.
+
+C'est ce que fait l'**index des parents**. Retrouver le parent d'une réponse
+coûtait, à chaque message, une copie de `lookbackMessages` entrées puis un
+parcours linéaire. Les messages sont désormais indexés à mesure qu'ils
+arrivent, sous la clé qu'on cherchera — auteur et texte normalisé — et l'index
+est amorcé avec l'historique au branchement. Le balayage ne sert plus que de
+repli, quand le parent est antérieur au branchement ou que l'index vient d'être
+vidé (`indexLimit`).
 
 ## La cause racine : l'API ne rend pas des tables Lua
 

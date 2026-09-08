@@ -72,15 +72,26 @@ local CONFIG = {
         -- masquée (« Hide reply context »), au lieu de laisser une ligne vide.
         lineBreak = true,
 
-        -- Nombre de messages récents à fouiller pour retrouver le parent.
-        -- Trop bas : on rate des parents et on perd les emotes. Trop haut : on
-        -- paie une recherche linéaire sur chaque réponse.
+        -- Nombre de messages récents à fouiller pour retrouver le parent, QUAND
+        -- l'index ne l'a pas. C'est le repli, pas le chemin normal.
         lookbackMessages = 200,
 
-        -- Teinte de fond du message qui répond (équivalent de `reply.lineTint`).
-        -- Désactivé par défaut : Chatterino s'en sert pour ses propres highlights
-        -- et l'écraser ferait disparaître un signal utile.
-        lineTint = nil,
+        -- Taille de l'index des parents. Il rend la recherche immédiate au lieu
+        -- de copier puis parcourir `lookbackMessages` messages à chaque réponse
+        -- — c'est ce parcours qu'on voyait à l'écran. Au-delà de cette taille,
+        -- l'index est vidé : les parents des réponses suivantes retombent sur le
+        -- balayage, qui les retrouve quand même.
+        indexLimit = 400,
+
+        -- Teinte de fond des messages qui répondent (`reply.lineTint`).
+        --
+        -- FORMAT : « #AARRGGBB », alpha en tête. Qt lit une chaîne de neuf
+        -- caractères dans cet ordre, alors que le sélecteur de Chatterino
+        -- affiche son hexadécimal en RGBA. Recopier ce qu'il montre inverse
+        -- donc l'alpha et le bleu, sans rien signaler.
+        --   sélecteur : R=124 V=124 B=124 alpha=75  →  #7c7c7c4b
+        --   ici       :                                #4b7c7c7c
+        lineTint = "#4b7c7c7c",
     },
 
     -- Chaînes à brancher par leur nom, en minuscules et sans « # ».
@@ -116,7 +127,7 @@ local CONFIG = {
 
 local M = {}
 
-local VERSION = "0.9.0"
+local VERSION = "0.10.0"
 M.VERSION = VERSION
 
 local function log(level, ...)
@@ -347,6 +358,76 @@ function M.find_reply_context(elements)
 end
 
 -- =============================================================================
+-- Index des parents
+-- =============================================================================
+
+-- Retrouver le parent d'une réponse coûtait, à chaque message : une copie de
+-- `lookbackMessages` entrées, puis un parcours linéaire. Sur un chat rapide,
+-- c'est ce travail qui rendait visible la transition avant/après.
+--
+-- On indexe donc les messages à mesure qu'ils arrivent, sous la même clé que
+-- celle qu'on cherchera : auteur et texte normalisé. La recherche devient
+-- immédiate, et le balayage ne sert plus que de repli.
+local parent_index = {}
+
+---@param name string?
+---@param text string?
+---@return string
+local function index_key(name, text)
+    return ((name or ""):lower()) .. "\0" .. normalize(text)
+end
+M.index_key = index_key
+
+--- Range un message dans l'index de son canal.
+---@param channel_name string
+---@param msg table
+local function index_message(channel_name, msg)
+    if not channel_name or channel_name == "" then
+        return
+    end
+
+    local bucket = parent_index[channel_name]
+    if not bucket then
+        bucket = { entries = {}, count = 0 }
+        parent_index[channel_name] = bucket
+    end
+
+    local key = index_key(msg.display_name, msg.message_text)
+    if bucket.entries[key] == nil then
+        bucket.count = bucket.count + 1
+    end
+    -- Le plus récent l'emporte : c'est presque toujours à lui qu'on répond.
+    bucket.entries[key] = msg
+
+    -- Bornage. Vider vaut mieux que tenir une file : le coût d'un index vide est
+    -- un repli sur le balayage, qui retrouve le parent de toute façon.
+    if bucket.count > CONFIG.reply.indexLimit then
+        parent_index[channel_name] = { entries = {}, count = 0 }
+    end
+end
+M.index_message = index_message
+
+--- Cherche un parent dans l'index. `nil` si absent : au balayage de conclure.
+---@param channel_name string
+---@param name string
+---@param words table
+---@return table?
+local function index_lookup(channel_name, name, words)
+    local bucket = parent_index[channel_name]
+    if not bucket then
+        return nil
+    end
+    return bucket.entries[index_key(name, table.concat(words, " "))]
+end
+M.index_lookup = index_lookup
+
+--- Oublie l'index d'un canal fermé.
+---@param channel_name string
+local function index_forget(channel_name)
+    parent_index[channel_name] = nil
+end
+
+-- =============================================================================
 -- Recherche du message parent
 -- =============================================================================
 
@@ -555,11 +636,38 @@ local function carry_over(msg)
 
     -- `highlight_color` vaut "" quand il n'y en a pas ; passer la chaîne vide
     -- poserait une couleur nulle au lieu de n'en poser aucune.
+    --
+    -- Un highlight DÉJÀ posé est prioritaire : ce sont les règles de badge de
+    -- l'utilisateur (modo, VIP…), et les écraser détruirait le signal qu'il a
+    -- configuré. Notre teinte ne sert qu'aux réponses qui n'en ont aucune.
     local hl = msg.highlight_color
     if type(hl) == "string" and hl ~= "" then
         init.highlight_color = hl
     elseif CONFIG.reply.lineTint then
         init.highlight_color = CONFIG.reply.lineTint
+
+        -- Poser la couleur ne suffit pas. `MessageLayout::paint` ne mélange le
+        -- fond que si le message porte `Highlighted` :
+        --
+        --     else if ((flags.has(MessageFlag::Highlighted) || …) && …)
+        --     {
+        --         assert(this->message_->highlightColor);
+        --
+        -- Les deux vont donc ensemble, toujours.
+        --
+        -- Conséquence assumée : la chaîne de fond est un si/sinon-si, et
+        -- `Highlighted` y passe AVANT `Announcement` et `Subscription`. Une
+        -- réponse qui serait aussi une notice d'abonnement prendra notre gris
+        -- plutôt que la couleur d'abonnement. `FirstMessage` et `WatchStreak`,
+        -- eux, restent prioritaires sur nous.
+        --
+        -- Autre conséquence : un message marqué `Highlighted` laisse une marque
+        -- de sa couleur dans la barre de défilement. Mettre `lineTint = nil`
+        -- si ces marques grises encombrent.
+        local highlighted = (c2.MessageFlag or {}).Highlighted
+        if type(highlighted) == "number" and type(init.flags) == "number" then
+            init.flags = init.flags | highlighted
+        end
     end
 
     return init
@@ -580,11 +688,24 @@ local function rebuild_reply(channel, msg)
 
     local parent = nil
     if CONFIG.reply.renderEmotes and ctx.name then
-        local ok, snapshot = pcall(function()
-            return to_list(channel:message_snapshot(CONFIG.reply.lookbackMessages))
-        end)
-        if ok and snapshot then
-            parent = M.match_parent(snapshot, ctx.name, ctx.words)
+        -- Chemin normal : l'index répond tout de suite.
+        local channel_name = select(2, pcall(function()
+            return channel:get_name()
+        end))
+        if type(channel_name) == "string" then
+            parent = index_lookup(channel_name, ctx.name, ctx.words)
+        end
+
+        -- Repli : le parent est arrivé avant qu'on branche le canal, ou l'index
+        -- vient d'être vidé. On paie alors la copie et le parcours, mais une
+        -- fois de temps en temps au lieu de systématiquement.
+        if not parent then
+            local ok, snapshot = pcall(function()
+                return to_list(channel:message_snapshot(CONFIG.reply.lookbackMessages))
+            end)
+            if ok and snapshot then
+                parent = M.match_parent(snapshot, ctx.name, ctx.words)
+            end
         end
     end
 
@@ -694,6 +815,12 @@ local function on_message(channel, msg)
     -- `messageReplaced` les met correctement à jour.
     stats.seen = stats.seen + 1
 
+    -- Indexer AVANT de différer : le parent d'une réponse est un message déjà
+    -- passé, et il doit être connu quand cette réponse sera traitée.
+    pcall(function()
+        index_message(channel:get_name(), msg)
+    end)
+
     c2.later(function()
         if reentrant then
             return
@@ -792,6 +919,15 @@ local function hook_channel(channel, force)
         hooked_channels[name] = channel
         debug("canal branché :", name)
 
+        -- Amorcer l'index avec ce qui est déjà affiché, sinon les premières
+        -- réponses après un branchement retomberaient toutes sur le balayage.
+        pcall(function()
+            for _, m in ipairs(to_list(
+                channel:message_snapshot(CONFIG.reply.indexLimit))) do
+                index_message(name, m)
+            end
+        end)
+
         -- Rendre le branchement VISIBLE, et agir tout de suite sur l'existant.
         -- Une ligne de console ne se voit pas ; un message dans le chat, si.
         local fixed = rebuild_existing(channel)
@@ -869,6 +1005,7 @@ local function sweep_channels()
         if checked and not valid then
             hooked[name] = nil
             hooked_channels[name] = nil
+            index_forget(name)
         end
     end
 

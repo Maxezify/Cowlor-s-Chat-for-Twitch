@@ -349,6 +349,53 @@ test("tolère une entrée absurde", function()
 end)
 
 -- ---------------------------------------------------------------------------
+print("\nindex des parents")
+-- ---------------------------------------------------------------------------
+-- Sans index, chaque réponse copiait puis parcourait 200 messages. C'est ce
+-- travail qui rendait la transition avant/après visible à l'écran.
+
+test("un message indexé se retrouve immédiatement", function()
+    local parent = chat_message({ display_name = "Alice", message_text = "salut" })
+    plugin.index_message("#idx", parent)
+    equal(plugin.index_lookup("#idx", "Alice", { "salut" }), parent)
+end)
+
+test("la recherche ignore la casse du pseudo", function()
+    local parent = chat_message({ display_name = "Alice", message_text = "salut" })
+    plugin.index_message("#casse", parent)
+    check(plugin.index_lookup("#casse", "alice", { "salut" }))
+end)
+
+test("la clé normalise les espaces", function()
+    equal(plugin.index_key("Alice", "a   b"), plugin.index_key("alice", " a b "))
+end)
+
+test("le plus récent l'emporte sur un message répété", function()
+    plugin.index_message("#rep", chat_message({ id = "vieux",
+        display_name = "Alice", message_text = "+1" }))
+    plugin.index_message("#rep", chat_message({ id = "recent",
+        display_name = "Alice", message_text = "+1" }))
+    equal(plugin.index_lookup("#rep", "Alice", { "+1" }).id, "recent")
+end)
+
+test("un canal inconnu rend nil au lieu de lever", function()
+    check(plugin.index_lookup("#jamais-vu", "Alice", { "salut" }) == nil)
+end)
+
+test("l'index est borné", function()
+    local previous = plugin.CONFIG.reply.indexLimit
+    plugin.CONFIG.reply.indexLimit = 3
+    for i = 1, 5 do
+        plugin.index_message("#borne", chat_message({
+            display_name = "U" .. i, message_text = "m" .. i }))
+    end
+    plugin.CONFIG.reply.indexLimit = previous
+    -- Le dépassement vide l'index : le repli sur le balayage reprend la main.
+    check(plugin.index_lookup("#borne", "U1", { "m1" }) == nil,
+        "les entrées d'avant le vidage ne doivent plus être là")
+end)
+
+-- ---------------------------------------------------------------------------
 print("\nassemblage")
 -- ---------------------------------------------------------------------------
 
