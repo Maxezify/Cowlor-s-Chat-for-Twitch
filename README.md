@@ -33,12 +33,12 @@ Le nightly est explicitement marqué expérimental par SevenTV. C'est un vrai co
 
 ## État
 
-**v0.5.0 — les citations sont reconstruites.** Le reste est en chantier, voir la feuille de
+**v0.6.0 — instrumenté : `/cowlors` montre les compteurs et le DOM réel.** Le reste est en chantier, voir la feuille de
 route plus bas.
 
 | | |
 |---|---|
-| Logique | testée — 45 vérifications contre une API `c2` simulée |
+| Logique | testée — 47 vérifications contre une API `c2` simulée |
 | Rendu réel | **jamais exécuté dans Chatterino** |
 
 Ce plugin n'a pas encore tourné une seule fois dans un vrai Chatterino. La

@@ -556,6 +556,42 @@ test("le branchement se signale dans le chat", function()
     check(said:find(plugin.VERSION, 1, true), "la version doit être annoncée")
 end)
 
+test("le balayage repasse sur l'existant des canaux branchés", function()
+    -- Filet de sécurité : même si le chemin événementiel ne produit rien, une
+    -- réponse arrivée après le branchement doit finir par être reconstruite.
+    local channel = mock.join(mock.channel("filet"))
+    plugin.hook_channel(channel)
+
+    local parent = chat_message({
+        display_name = "Alice",
+        message_text = "salut",
+        body = { mock.element({ type = "text", words = { "salut" }, flags = EF.Text }) },
+    })
+    mock.push(channel, parent)
+    mock.push(channel, reply_message({
+        display_name = "Bob", parent_name = "Alice", quote_words = { "salut" },
+    }))
+
+    plugin.sweep_channels()
+
+    for _, el in ipairs(channel._messages[#channel._messages]:elements()) do
+        check(el.type ~= "single-line-text",
+            "le repassage doit avoir reconstruit la citation")
+    end
+end)
+
+test("le rapport expose les compteurs et les types d'éléments réels", function()
+    local channel, _, _ = scenario({
+        mock.element({ type = "text", words = { "salut" }, flags = EF.Text }),
+    }, "salut", { "salut" })
+
+    plugin.command({ channel = channel })
+    local report = table.concat(channel.system_messages, "\n")
+    check(report:find("compteurs —"), "les compteurs doivent figurer au rapport")
+    check(report:find("éléments :"),
+        "la liste brute des types doit figurer : c'est elle qui tranche")
+end)
+
 test("hook_channel est idempotent", function()
     local channel = mock.channel("#idem")
     local ok1, name1 = plugin.hook_channel(channel)

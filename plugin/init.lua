@@ -92,7 +92,7 @@ local CONFIG = {
 
 local M = {}
 
-local VERSION = "0.5.0"
+local VERSION = "0.6.0"
 M.VERSION = VERSION
 
 local function log(level, ...)
@@ -564,7 +564,14 @@ M.rebuild_reply = rebuild_reply
 -- Branchement sur les canaux
 -- =============================================================================
 
-local hooked = {}      -- nom de canal -> ConnectionHandle
+-- Compteurs de diagnostic. Sans eux, « le callback ne se déclenche jamais » et
+-- « il se déclenche mais ne reconnaît rien » sont indiscernables — et ce sont
+-- deux problèmes opposés.
+local stats = { seen = 0, detected = 0, rebuilt = 0, failed = 0 }
+M.stats = stats
+
+local hooked = {}          -- nom de canal -> ConnectionHandle
+local hooked_channels = {} -- nom de canal -> canal, pour le repassage périodique
 local warned_no_events = false
 local reentrant = false
 
@@ -597,6 +604,8 @@ local function on_message(channel, msg)
     --
     -- En différant d'un tour de boucle, toutes les vues ont posé leur calque et
     -- `messageReplaced` les met correctement à jour.
+    stats.seen = stats.seen + 1
+
     c2.later(function()
         if reentrant then
             return
@@ -611,13 +620,18 @@ local function on_message(channel, msg)
             return
         end
 
+        stats.detected = stats.detected + 1
+
         reentrant = true
         local replaced, err = pcall(function()
             channel:replace_message(msg, replacement)
         end)
         reentrant = false
 
-        if not replaced then
+        if replaced then
+            stats.rebuilt = stats.rebuilt + 1
+        else
+            stats.failed = stats.failed + 1
             log(c2.LogLevel.Warning, "remplacement échoué :", err)
         end
     end, 0)
@@ -685,6 +699,7 @@ local function hook_channel(channel, force)
 
     if connected then
         hooked[name] = handle
+        hooked_channels[name] = channel
         debug("canal branché :", name)
 
         -- Rendre le branchement VISIBLE, et agir tout de suite sur l'existant.
@@ -763,7 +778,23 @@ local function sweep_channels()
         end)
         if checked and not valid then
             hooked[name] = nil
+            hooked_channels[name] = nil
         end
+    end
+
+    -- Filet de sécurité. Le chemin événementiel devrait suffire, mais il a
+    -- échoué assez longtemps pour qu'on ne lui fasse plus une confiance
+    -- exclusive : ce repassage reconstruit ce qui est affiché et n'aurait pas
+    -- dû l'être. L'opération est idempotente, donc un message déjà traité ne
+    -- coûte qu'un parcours de ses éléments.
+    for _, channel in pairs(hooked_channels) do
+        pcall(function()
+            local fixed = rebuild_existing(channel)
+            if fixed > 0 then
+                stats.rebuilt = stats.rebuilt + fixed
+                debug(("repassage : %d citation(s) reconstruite(s)"):format(fixed))
+            end
+        end)
     end
 
     -- Le nombre de canaux branchés est LA information qui dit si le plugin a
@@ -858,6 +889,40 @@ local function command(ctx)
     table.sort(names)
     say(("canaux branchés (%d) : %s"):format(
         #names, #names > 0 and table.concat(names, ", ") or "aucun"))
+
+    say(("compteurs — messages vus : %d, citations détectées : %d, reconstruites : %d, échecs : %d")
+        :format(stats.seen, stats.detected, stats.rebuilt, stats.failed))
+
+    -- LE diagnostic décisif : la liste brute des types d'éléments d'une réponse,
+    -- telle que Chatterino la construit vraiment. Toute la détection repose sur
+    -- la présence d'un « single-line-text » ; s'il n'y figure pas, elle est bâtie
+    -- sur une hypothèse fausse, et c'est ici qu'on le voit.
+    pcall(function()
+        local snapshot = channel:message_snapshot(CONFIG.reply.lookbackMessages)
+        for i = #snapshot, 1, -1 do
+            local types = {}
+            local looks_like_reply = false
+            for _, el in ipairs(snapshot[i]:elements()) do
+                local t = tostring(el.type)
+                types[#types + 1] = t
+                if t == "reply-curve" or t == "single-line-text" then
+                    looks_like_reply = true
+                end
+            end
+            if looks_like_reply then
+                say("dernière réponse — éléments : " .. table.concat(types, " "))
+                return
+            end
+        end
+        if #snapshot > 0 then
+            local types = {}
+            for _, el in ipairs(snapshot[#snapshot]:elements()) do
+                types[#types + 1] = tostring(el.type)
+            end
+            say("aucune réponse trouvée ; dernier message — éléments : "
+                .. table.concat(types, " "))
+        end
+    end)
 
     local fixed = rebuild_existing(channel)
     say(("citations reconstruites à l'instant : %d"):format(fixed))
